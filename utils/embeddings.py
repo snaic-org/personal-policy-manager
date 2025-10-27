@@ -25,6 +25,7 @@ class EmbeddingGenerator:
             from openai import OpenAI
 
             api_key = os.getenv("OPENAI_API_KEY")
+            print(f"DEBUG: API Key loaded: {api_key[:5]}...{api_key[-4:]}" if api_key else "DEBUG: API Key is None")
             if not api_key:
                 raise ValueError("OPENAI_API_KEY environment variable not set")
 

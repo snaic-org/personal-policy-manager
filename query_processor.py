@@ -1,18 +1,18 @@
 """
 Query Processor
 Handles domain-agnostic query processing using hybrid FAISS + BM25 search.
-Enhanced for comprehensive retrieval and responses.
+Loads user profile for personalized responses within specific batches (e.g., 'my_policies').
 """
 
 import os
 import json
 import time
 from typing import List, Dict, Any, Optional, Tuple
+from pathlib import Path
 
 from openai import OpenAI
 
 from utils.search import HybridSearchEngine
-from utils.embeddings import EmbeddingGenerator
 from batch_manager import BatchManager
 
 class QueryProcessor:
@@ -20,107 +20,43 @@ class QueryProcessor:
         self.batch_manager = batch_manager
         self.search_engine = None
         self.current_batch_id = None
-
-        # Enhanced decomposition prompt for comprehensive coverage
-        self.decomposition_prompt_template = """
-You are an expert system that decomposes complex insurance policy comparison questions into focused sub-questions.
-
-CRITICAL RULES:
-1. For comparison questions, generate BALANCED sub-questions for BOTH policies
-2. Each sub-question must target ONE specific aspect of ONE policy
-3. Always generate equal sub-questions for each policy being compared
-4. Be specific about which policy each sub-question refers to
-5. Generate 4-10 sub-questions total (MORE is better for comprehensive coverage)
-6. **ALWAYS include feature-focused questions like "What are ALL unique features/benefits/riders in X policy?"**
-
-**IMPORTANT: Your response MUST be in JSON format with a "questions" key containing an array of question strings.**
-
-Examples:
-
-User Question: "What are the pros and cons of SingLife versus FWD?"
-Output (JSON format):
-{{
-    "questions": [
-        "What are ALL the unique benefits and features of SingLife Essential Critical Illness II?",
-        "What are ALL the unique benefits and features of FWD Critical Illness Plus?",
-        "What are ALL the optional riders available in SingLife's policy?",
-        "What are ALL the optional riders available in FWD's policy?",
-        "What are the limitations or disadvantages of SingLife's policy?",
-        "What are the limitations or disadvantages of FWD's policy?",
-        "What special benefits does SingLife offer (like rewards, pre-existing conditions)?",
-        "What special benefits does FWD offer (like premium waivers, auto-reload)?",
-        "What makes SingLife's application process unique?",
-        "What makes FWD's claim process unique?"
-    ]
-}}
-
-User Question: "What exclusions are present in SingLife's policy that are not in FWD's policy?"
-Output (JSON format):
-{{
-    "questions": [
-        "What are ALL the exclusions listed in the SingLife Essential Critical Illness II policy?",
-        "What are ALL the exclusions listed in the FWD Critical Illness Plus policy?",
-        "What conditions or situations are excluded in SingLife's policy documents?",
-        "What conditions or situations are excluded in FWD's policy documents?"
-    ]
-}}
-
-User Question: {query}
-Output (JSON format):
-"""
-
-        self.system_prompt = """
-You are a knowledgeable assistant helping users find information from documents.
-Answer questions clearly and accurately based on the provided context.
-Always cite specific information from the documents when possible.
-If you cannot find relevant information, say so clearly.
-Be comprehensive and thorough in your responses.
-"""
-
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.user_profile = self._load_user_profile() # Load profile on initialization
 
-    def _decompose_query(self, query: str) -> List[str]:
-        """Decompose a complex query into simpler sub-questions using a language model."""
-        try:
-            prompt = self.decomposition_prompt_template.format(query=query)
-            response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                response_format={"type": "json_object"}
-            )
-            result = json.loads(response.choices[0].message.content)
-
-            # Look for 'questions' key specifically
-            if "questions" in result and isinstance(result["questions"], list):
-                return result["questions"]
-
-            # Fallback: find any list in the JSON object
-            for key, value in result.items():
-                if isinstance(value, list) and len(value) > 0:
-                    return value
-
-            print("Warning: No question list found in decomposition response")
-            return []
-
-        except json.JSONDecodeError as e:
-            print(f"Failed to parse JSON from decomposition: {e}")
-            return [query]
-        except Exception as e:
-            print(f"Failed to decompose query: {e}")
-            return [query]
+    def _load_user_profile(self) -> Optional[Dict[str, Any]]:
+        """Loads the user profile from user_profile.json in the project root."""
+        profile_path = Path("user_profile.json")
+        if profile_path.exists():
+            try:
+                with open(profile_path, 'r') as f:
+                    profile = json.load(f)
+                    print("User profile loaded successfully.")
+                    return profile
+            except json.JSONDecodeError:
+                print("Error: user_profile.json is not valid JSON.")
+                return None
+            except Exception as e:
+                print(f"Error loading user profile: {e}")
+                return None
+        else:
+            # it's okay if the profile doesn't exist, just means no personalization
+            print("Info: user_profile.json not found. Proceeding without personalization.")
+            return None
 
     def _ensure_batch_loaded(self, batch_id: str) -> bool:
         """Ensure the specified batch is loaded in the search engine."""
+        # If already loaded, do nothing
         if self.current_batch_id == batch_id and self.search_engine:
             return True
 
         paths = self.batch_manager.get_batch_paths(batch_id)
         if not paths:
-            print(f"Batch '{batch_id}' not found")
+            print(f"Error: Batch '{batch_id}' configuration not found in registry.")
             return False
 
+        print(f"Loading indexes for batch '{batch_id}'...")
         try:
+            # Create a new search engine instance for the specified batch
             self.search_engine = HybridSearchEngine()
             success = self.search_engine.load_indexes(
                 faiss_path=paths["faiss_index"],
@@ -129,313 +65,226 @@ Be comprehensive and thorough in your responses.
 
             if success:
                 self.current_batch_id = batch_id
+                print(f"Successfully loaded indexes for batch '{batch_id}'.")
                 return True
             else:
-                print(f"Failed to load indexes for batch '{batch_id}'")
+                print(f"Error: Failed to load indexes for batch '{batch_id}'.")
+                self.search_engine = None # Ensure it's None if loading failed
+                self.current_batch_id = None
                 return False
 
         except Exception as e:
-            print(f"Error loading batch '{batch_id}': {e}")
+            print(f"Error initializing search engine for batch '{batch_id}': {e}")
+            self.search_engine = None
+            self.current_batch_id = None
             return False
-
-    def _is_comparison_query(self, query: str) -> bool:
-        """Detect if query is asking for a comparison between policies."""
-        comparison_keywords = [
-            'compare', 'versus', 'vs', 'vs.', 'difference', 'different',
-            'better than', 'worse than', 'between', 'both policies',
-            'pros and cons', 'advantages', 'disadvantages'
-        ]
-        query_lower = query.lower()
-        return any(keyword in query_lower for keyword in comparison_keywords)
-
-    def _detect_policy_names(self, query: str) -> List[str]:
-        """Detect which policies are mentioned in the query."""
-        policies = []
-        query_lower = query.lower()
-
-        if 'singlife' in query_lower or 'sing life' in query_lower:
-            policies.append('singlife')
-        if 'fwd' in query_lower:
-            policies.append('fwd')
-
-        return policies
-
-    def _balanced_search(self, sub_queries: List[str], is_comparison: bool,
-                        mentioned_policies: List[str]) -> List[Dict]:
-        """Perform balanced retrieval with increased coverage for comprehensive responses."""
-
-        all_results = []
-
-        # Perform search for each sub-query
-        for sub_q in sub_queries:
-            processed_sub_q = self._preprocess_query(sub_q)
-            results = self.search_engine.hybrid_search(
-                query=processed_sub_q,
-                top_k=5
-            )
-            all_results.extend(results)
-
-        # If not a comparison, just deduplicate and return
-        if not is_comparison:
-            return self._deduplicate_results(all_results)
-
-        # For comparisons, ensure balanced retrieval from each policy
-        policy_results = {policy: [] for policy in mentioned_policies}
-        other_results = []
-
-        for result in all_results:
-            content = result.get('content', '').lower()
-            filename = result.get('metadata', {}).get('filename', '').lower()
-
-            categorized = False
-            for policy in mentioned_policies:
-                if policy in content or policy in filename:
-                    policy_results[policy].append(result)
-                    categorized = True
-                    break
-
-            if not categorized:
-                other_results.append(result)
-
-        # Balance results - INCREASED to 10 chunks per policy for comprehensiveness
-        balanced = []
-        max_per_policy = 10  # INCREASED from 6 to 10
-
-        for policy in mentioned_policies:
-            policy_chunks = self._deduplicate_results(policy_results[policy])
-            balanced.extend(policy_chunks[:max_per_policy])
-
-        # Add some other results
-        balanced.extend(self._deduplicate_results(other_results)[:5])
-
-        # Final deduplication
-        balanced = self._deduplicate_results(balanced)
-
-        # Print balance for debugging
-        print(f"\n=== Retrieval Balance ===")
-        for policy in mentioned_policies:
-            count = sum(1 for r in balanced
-                       if policy in r.get('content', '').lower() or
-                       policy in r.get('metadata', {}).get('filename', '').lower())
-            print(f"{policy.upper()}: {count} chunks")
-        print(f"========================\n")
-
-        return balanced
 
     def _deduplicate_results(self, results: List[Dict]) -> List[Dict]:
         """Remove duplicate results based on content."""
         unique_results = []
         seen_content = set()
-
         for result in results:
             content = result.get('content', '')
-            if content not in seen_content:
+            # Check for non-empty content before adding
+            if content and content not in seen_content:
                 unique_results.append(result)
                 seen_content.add(content)
-
         return unique_results
 
-    def _verify_answer_confidence(self, query: str, search_results: List[Dict],
-                                  is_comparison: bool, mentioned_policies: List[str]) -> Tuple[bool, str]:
-        """Verify if we have enough evidence to answer the query confidently."""
+    def _filter_results_by_profile(self, results: List[Dict]) -> List[Dict]:
+        """Filters search results to only include documents listed in the user profile."""
+        # Only filter if a profile with policies_owned exists
+        if not self.user_profile or "policies_owned" not in self.user_profile:
+            print("Info: No 'policies_owned' found in profile. Returning all results.")
+            return results
 
-        if not search_results:
-            return False, "No relevant documents found for your question."
+        owned_policies = set(self.user_profile["policies_owned"])
+        if not owned_policies:
+            print("Warning: 'policies_owned' list is empty in profile. Returning all results.")
+            return results
 
-        # For comparison queries, check if we have evidence from all mentioned policies
-        if is_comparison and len(mentioned_policies) >= 2:
-            found_policies = set()
+        filtered_results = []
+        for result in results:
+            # Ensure metadata and filename exist before checking
+            metadata = result.get('metadata', {})
+            filename = metadata.get('filename')
+            if filename and filename in owned_policies:
+                filtered_results.append(result)
 
-            for result in search_results:
-                content = result.get('content', '').lower()
-                filename = result.get('metadata', {}).get('filename', '').lower()
-
-                for policy in mentioned_policies:
-                    if policy in content or policy in filename:
-                        found_policies.add(policy)
-
-            missing_policies = set(mentioned_policies) - found_policies
-
-            if missing_policies:
-                missing_str = ', '.join(missing_policies)
-                found_str = ', '.join(found_policies) if found_policies else 'none'
-                return False, (f"I can only find information about {found_str}. "
-                             f"Cannot make a fair comparison without information about {missing_str}.")
-
-        return True, ""
+        print(f"Filtered results to {len(filtered_results)} chunks based on {len(owned_policies)} owned policies.")
+        return filtered_results
 
     def process_query(self, query: str, batch_id: str = None) -> str:
         """Process a query and return the response."""
         try:
-            target_batch = batch_id or self.batch_manager.get_current_batch()
+            # Determine the target batch
+            target_batch = batch_id or self.batch_manager.get_default_batch()
             if not target_batch:
-                return "No batch specified and no active batch found."
+                return "Error: No batch specified and no default batch set."
 
+            # Ensure the correct batch's indexes are loaded
             if not self._ensure_batch_loaded(target_batch):
-                return f"Failed to load batch '{target_batch}'"
+                return f"Error: Failed to load or switch to batch '{target_batch}'."
 
             start_time = time.time()
+            print(f"\nProcessing query for batch: {target_batch}")
+            print(f"Query: {query}")
 
-            is_comparison = self._is_comparison_query(query)
-            mentioned_policies = self._detect_policy_names(query)
-
-            print(f"Query type: {'Comparison' if is_comparison else 'Single-topic'}")
-            print(f"Policies mentioned: {mentioned_policies}")
-
-            # Step 1: Decompose query
-            sub_queries = self._decompose_query(query)
-
-            if not sub_queries:
-                sub_queries = [query]
-                print("Decomposition returned no questions, using original query")
-
-            print(f"Decomposed into {len(sub_queries)} sub-queries:")
-            for i, sq in enumerate(sub_queries, 1):
-                print(f"  {i}. {sq}")
-
-            # Step 2: Perform balanced search
-            unique_results = self._balanced_search(sub_queries, is_comparison, mentioned_policies)
-            print(f"Retrieved {len(unique_results)} unique chunks")
-
-            # Step 3: Verify evidence
-            has_evidence, reason = self._verify_answer_confidence(
-                query, unique_results, is_comparison, mentioned_policies
+            # --- Step 1: Perform Hybrid Search ---
+            # Retrieve a larger set initially to allow for filtering
+            raw_search_results = self.search_engine.hybrid_search(
+                query=query,
+                top_k=20 # Get more results initially
             )
+            print(f"Retrieved {len(raw_search_results)} raw results from hybrid search.")
 
-            if not has_evidence:
-                return f"I cannot confidently answer this question. {reason}"
+            # --- Step 2: Filter based on Profile (if applicable) ---
+            # Define which batches should trigger personalization (e.g., based on name convention)
+            is_personal_batch = (target_batch == "my_policies") # Example condition
+
+            relevant_results = raw_search_results
+            if is_personal_batch:
+                if self.user_profile:
+                    relevant_results = self._filter_results_by_profile(raw_search_results)
+                else:
+                    # Decide behavior: proceed without filtering or return an error/warning?
+                    print("Warning: Operating in personal batch mode but no user profile loaded.")
+                    # Let's proceed without filtering in this case, but log it.
+
+            # --- Step 3: Deduplicate ---
+            unique_results = self._deduplicate_results(relevant_results)
+            print(f"Retained {len(unique_results)} unique relevant chunks after filtering/deduplication.")
 
             if not unique_results:
-                return "No relevant documents found for your question."
+                if is_personal_batch and self.user_profile:
+                    return f"Based on your profile, I couldn't find relevant information in your specific policy documents ('{', '.join(self.user_profile.get('policies_owned',[]))}') for the question: '{query}'."
+                else:
+                    return f"No relevant information found in the documents of batch '{target_batch}' for the question: '{query}'."
 
-            # Step 4: Generate response
-            response = self._generate_response(query, unique_results, is_comparison)
+            # --- Step 4: Generate Response ---
+            response = self._generate_response(query, unique_results, is_personal_batch)
 
             processing_time = time.time() - start_time
-            print(f"Processing time: {processing_time:.2f}s")
+            print(f"Total processing time: {processing_time:.2f}s")
 
             return response
 
         except Exception as e:
-            return f"Error processing query: {e}"
+            # Log the full error for debugging
+            import traceback
+            print(f"An unexpected error occurred in process_query: {e}")
+            traceback.print_exc()
+            return f"An error occurred while processing your query. Please check logs. Error: {e}"
 
-    def _preprocess_query(self, query: str) -> str:
-        """Basic query preprocessing."""
-        stopwords = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'}
-        words = query.lower().split()
-        filtered_words = [word for word in words if word not in stopwords]
-        return ' '.join(filtered_words) if filtered_words else query
-
-    def _generate_response(self, original_query: str, search_results: List[Dict],
-                          is_comparison: bool) -> str:
-        """Generate comprehensive response with strict evidence requirements."""
+    def _generate_response(self, original_query: str, search_results: List[Dict], is_personal_batch: bool) -> str:
+        """Generate comprehensive response using retrieved chunks and potentially user profile."""
         if not search_results:
+            # This check is slightly redundant due to the check in process_query, but safe to keep.
             return "I couldn't find any relevant information in the documents to answer your question."
 
-        # Build context - INCREASED to 20 chunks for comparisons
+        # --- Build Context String ---
         context_parts = []
-        max_chunks = 20 if is_comparison else 15
+        max_chunks_for_context = 15 # Limit context size for LLM
 
-        for i, result in enumerate(search_results[:max_chunks], 1):
+        print(f"Building context from top {min(len(search_results), max_chunks_for_context)} chunks...")
+        for i, result in enumerate(search_results[:max_chunks_for_context], 1):
             content = result.get('content', '').strip()
             metadata = result.get('metadata', {})
-
-            if content:
-                filename = metadata.get('filename', 'Unknown')
+            if content: # Ensure content is not empty
+                filename = metadata.get('filename', 'Unknown Document')
                 page = metadata.get('page_number', 'N/A')
-                year = metadata.get('year', 'N/A')
-
-                source_header = f"[Source {i}: {filename}, Page {page}"
-                if year != 'N/A':
-                    source_header += f", Year {year}"
-                source_header += "]"
-
-                context_parts.append(f"{source_header}\n{content}")
+                # Use a consistent source format
+                source_ref = f"[Source {i}: {filename}, Page {page}]"
+                context_parts.append(f"{source_ref}\n{content}")
 
         if not context_parts:
-            return "I found some documents but couldn't extract relevant information to answer your question."
+            return "Error: Found relevant documents but failed to extract content for context."
 
-        context = "\n\n".join(context_parts)
+        context = "\n\n---\n\n".join(context_parts) # Use separator for clarity
+
+        # --- Prepare Profile Information String (if applicable) ---
+        profile_info_string = ""
+        user_name = None
+        if is_personal_batch and self.user_profile:
+            print("Including user profile information in the prompt.")
+            profile_items = []
+            user_name = self.user_profile.get('name')
+            if user_name:
+                profile_items.append(f"- User Name: {user_name}")
+            if self.user_profile.get('date_of_birth'):
+                profile_items.append(f"- Date of Birth: {self.user_profile.get('date_of_birth')}")
+            # Optionally add brief policy details, mindful of token limits
+            owned_policies = self.user_profile.get('policies_owned', [])
+            if owned_policies:
+                profile_items.append(f"- Policies Owned: {', '.join(owned_policies)}")
+            # Add more details carefully if needed from 'policy_details'
+
+            if profile_items:
+                 profile_info_string = "\n\nUSER PROFILE CONTEXT:\n" + "\n".join(profile_items)
 
 
-        comparison_instructions = ""
-        if is_comparison:
-            comparison_instructions = """
-COMPARISON-SPECIFIC RULES:
-- **You MUST have evidence from ALL policies being compared**
-- **To say "Policy A has X but Policy B doesn't", you need EXPLICIT evidence that Policy B excludes X**
-- **If Policy B simply doesn't mention X, say: "Policy A explicitly covers X. Policy B's documents don't discuss this feature."**
-- **NEVER assume silence means exclusion**
-- **Only compare pricing examples with IDENTICAL customer profiles**
-- **If profiles differ, explicitly state: "Cannot directly compare prices - different customer profiles"**
-- **Never claim one policy is "better" or "cheaper" without specific comparable evidence**
-"""
+        # --- Construct the Final Prompt ---
+        # Base prompt instructions
+        prompt_instructions = f"""You are an expert assistant with STRICT EVIDENCE REQUIREMENTS.
+Answer the question based ONLY on the provided documents ('AVAILABLE DOCUMENTS' section below) and user profile ('USER PROFILE CONTEXT' section below, if provided).
 
-        prompt = f"""You are an insurance policy expert with STRICT EVIDENCE REQUIREMENTS.
+{'This question is specifically about the user detailed in the USER PROFILE CONTEXT. Tailor your answer accordingly, referring to "your policy/policies".' if profile_info_string else 'Answer based generally on the documents provided.'}
 
-Question: {original_query}
+Your Task: Answer the following question:
+>>> {original_query} <<<
+{profile_info_string}
 
-Policy Documents:
+AVAILABLE DOCUMENTS:
+--- START OF DOCUMENTS ---
 {context}
+--- END OF DOCUMENTS ---
 
-CRITICAL INSTRUCTIONS:
-1. **ONLY state facts directly supported by the documents above**
-2. **Every claim MUST be cited with [Source X] reference**
-3. **If you don't have information, say "The documents don't provide information about X" and cite the sources you checked**
-4. **Be COMPREHENSIVE - include ALL features, benefits, riders, and unique selling points mentioned in the sources**
-5. **Don't just list obvious features - dig into special benefits, optional riders, and unique advantages**
-6. **Be precise about what documents say vs. what they don't mention**
+CRITICAL RESPONSE RULES:
+1. **Base Answer ONLY on AVAILABLE DOCUMENTS:** Do not use any prior knowledge or external information.
+2. **Cite EVERYTHING:** Every piece of information MUST end with a citation like [Source X] or [Sources X, Y], referencing the source number from the AVAILABLE DOCUMENTS section.
+3. **Handle Missing Information:** If the documents don't answer the question or part of it, explicitly state that and cite the sources checked. Example: "The provided documents do not specify the waiting period for Condition Z [no mention in Sources 1-5]."
+4. **Be Specific to User (if profile provided):** If USER PROFILE CONTEXT exists, address the user (e.g., "John, your policy...") and focus on their owned policies.
+5. **Be Comprehensive but Concise:** Include all relevant details found in the documents but avoid unnecessary jargon or repetition.
+6. **Quote Sparingly:** Prefer summarizing information with citations. Use direct quotes only if essential and keep them short.
+7. **No Assumptions:** Do not infer or assume details not explicitly stated. Explicitly state if something is not mentioned.
 
-{comparison_instructions}
+PROHIBITED:
+- Answering without citations.
+- Using information outside the AVAILABLE DOCUMENTS.
+- Making up details or features.
+- Claiming one option is "better" unless the documents provide explicit comparative evidence.
 
-**COMPREHENSIVENESS REQUIREMENT:**
-- For "pros and cons" questions: List AT LEAST 4-6 pros and 3-4 cons per policy if available in sources
-- For "coverage" questions: List ALL conditions, benefits, and riders mentioned
-- For "differences" questions: Identify EVERY difference mentioned, not just the most obvious ones
-- Look for special benefits like premium waivers, rewards, ICU benefits, diabetic conditions coverage, etc.
-
-CITATION FORMAT:
-- Use [Source X] or [Sources X, Y] after each factual claim
-- Example: "The policy covers diabetes-related conditions [Source 2, Page 15]"
-- Example: "SingLife mentions pre-existing condition coverage [Source 1], but FWD's documents don't discuss this aspect [no mention in Sources 3-6]"
-- **IMPORTANT: Even when saying "no information found", cite the sources you checked**
-
-PROHIBITED BEHAVIORS:
-❌ Making claims without source citations
-❌ Assuming missing information means exclusion
-❌ Comparing non-comparable customer profiles
-❌ Stating general insurance principles not in the documents
-❌ Hallucinating features not explicitly mentioned
-❌ Being superficial - dig deep into ALL features mentioned in sources
-
-Answer the question comprehensively with proper citations:
+Generate the answer now following all rules:
 """
 
+        # --- Call OpenAI API ---
         try:
-            from openai import OpenAI
-            from dotenv import load_dotenv
-            load_dotenv()
+            print("Sending request to OpenAI API...")
+            if not self.client:
+                 raise ValueError("OpenAI client is not initialized.")
 
-            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini", # Use "gpt-4o" for potentially better reasoning if needed
                 messages=[
-                    {"role": "system", "content": "You are a precise insurance expert who provides comprehensive, well-cited answers from documents."},
-                    {"role": "user", "content": prompt}
+                    {"role": "system", "content": "You are a precise assistant providing answers strictly based on given documents and user context, citing every piece of information."},
+                    {"role": "user", "content": prompt_instructions}
                 ],
-                max_tokens=1500,
-                temperature=0.1
+                max_tokens=1500, # Adjust based on expected answer length
+                temperature=0.05, # Very low temperature for factual, consistent answers
+                stop=None # Let the model decide when to stop
             )
 
-            return response.choices[0].message.content.strip()
+            final_answer = response.choices[0].message.content.strip()
+            print("Received response from OpenAI API.")
+            return final_answer
 
         except Exception as e:
-            print(f"OpenAI generation failed: {e}")
-            return f"Based on the policy documents, I found relevant information but couldn't generate a complete response. Key details: {context[:300]}..."
+            print(f"Error during OpenAI API call: {e}")
+            # Provide a more user-friendly error message, but log the technical details
+            return "Sorry, I encountered an error while generating the response. Please try again later or check the system logs."
 
     def get_performance_stats(self) -> Dict[str, Any]:
-        """Get performance statistics."""
+        """Get basic statistics about the search engine state."""
         if self.search_engine:
             return self.search_engine.get_stats()
-        return {}
+        return {"error": "Search engine not initialized."}
