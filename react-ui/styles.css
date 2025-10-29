@@ -1,0 +1,3 @@
+body { background: #fafafa; color: #111; }
+input { padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; }
+button { padding: 6px 10px; border-radius: 4px; cursor: pointer; }

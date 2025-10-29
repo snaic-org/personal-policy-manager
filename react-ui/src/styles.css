@@ -1,0 +1,178 @@
+/* Use border-box so height includes padding/border */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+/* Define header/footer heights to keep spacing consistent */
+:root {
+  --header-height: 70px;
+  --footer-height: 100px; /* includes input area + padding/shadow */
+}
+
+/* Prevent page scrolling, allow only messages to scroll */
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden; /* Prevent scrolling on the main document */
+}
+
+body {
+  background: #fafafa;
+}
+
+/* Fixed header */
+.app-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--header-height);
+  background: #fff;
+  padding: 0 16px; /* horizontal padding only — avoid changing total height */
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+}
+
+.app-header h2 {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+/* Chat container sits below header and above fixed input */
+.chat-container {
+  max-width: 1000px;
+  margin: 0 auto;
+  font-family: Arial, sans-serif;
+  /* place container below header */
+  margin-top: var(--header-height);
+  /* ensure the overall container height fits between header and footer */
+  height: calc(100vh - var(--header-height) - var(--footer-height));
+  position: relative;
+  overflow: hidden;
+}
+
+/* Messages area fills container and scrolls internally */
+.chat-messages {
+  height: 100%;
+  overflow-y: auto; /* Scrolling allowed here only */
+  padding: 20px;
+  padding-bottom: 24px; /* space above the fixed input */
+  -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
+  box-sizing: border-box;
+}
+
+/* Fixed input/footer at bottom */
+.chat-input-fixed {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: var(--footer-height);
+  background: #fff;
+  box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+}
+
+.chat-input-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 12px 16px; /* match padding to fit within footer height */
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.batch-select {
+  margin-bottom: 12px;
+}
+
+/* Input group styling */
+.input-group {
+  display: flex;
+  gap: 8px;
+}
+
+.input-group input {
+  flex: 1;
+  padding: 12px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 16px;
+}
+
+.input-group button {
+  padding: 12px 24px;
+  background: #1976d2;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.input-group button:disabled {
+  background: #ccc;
+}
+
+/* Message styles */
+.message {
+  margin-bottom: 16px;
+  padding: 16px;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.message.user {
+  background: #e3f2fd;
+  margin-left: 20%;
+}
+
+.message.bot {
+  background: #fff;
+  margin-right: 20%;
+}
+
+.message-header {
+  font-weight: bold;
+  margin-bottom: 8px;
+  color: #666;
+}
+
+.formatted-message {
+  line-height: 1.5;
+}
+
+.message-section {
+  margin-bottom: 16px;
+}
+
+.section-title {
+  margin: 0 0 8px;
+  color: #1976d2;
+  font-size: 1.1em;
+}
+
+.section-content {
+  margin-left: 16px;
+}
+
+.section-content li {
+  margin-bottom: 4px;
+  list-style-type: disc;
+}
+
+/* Empty state centered within messages area */
+.empty-state {
+  text-align: center;
+  color: #666;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding-top: 8px; /* small offset so it's not touching header */
+}

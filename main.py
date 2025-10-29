@@ -16,6 +16,51 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from batch_manager import BatchManager
 from query_processor import QueryProcessor
 
+# lightweight HTTP server option using Flask
+def run_api_server(batch_manager: BatchManager, host="0.0.0.0", port=5000):
+    from flask import Flask, request, jsonify
+    from flask_cors import CORS
+    import traceback  # Add for error logging
+
+    app = Flask(__name__)
+    CORS(app)  # Enable CORS for all routes
+
+    @app.route("/health", methods=["GET"])
+    def health():
+        return jsonify({"status": "ok"})
+
+    @app.route("/query", methods=["POST"])
+    def query_endpoint():
+        try:
+            data = request.get_json(force=True, silent=True) or {}
+            print(f"Received query request: {data}")  # Debug log
+            
+            q = data.get("query") or data.get("question")
+            batch = data.get("batch")
+
+            if not q:
+                return jsonify({"error": "Missing 'query' in request body"}), 400
+
+            # Determine batch to use
+            batch_id = batch or batch_manager.get_default_batch()
+            if not batch_id:
+                return jsonify({"error": "No batch specified and no default batch set"}), 400
+
+            if not batch_manager.switch_batch(batch_id):
+                return jsonify({"error": f"Failed to switch to batch '{batch_id}'"}), 400
+
+            qp = QueryProcessor(batch_manager)
+            resp = qp.process_query(q)
+            return jsonify({"response": resp, "batch": batch_id})
+            
+        except Exception as e:
+            print(f"Error processing query: {str(e)}")
+            print(traceback.format_exc())  # Detailed error log
+            return jsonify({"error": str(e)}), 500
+
+    print(f"Starting API server at http://{host}:{port}")
+    app.run(host=host, port=port)
+
 def main():
     parser = argparse.ArgumentParser(description="Domain-Agnostic Document Chatbot")
 
@@ -28,11 +73,21 @@ def main():
     parser.add_argument("--batch-info", help="Show information about a specific batch")
     parser.add_argument("--set-default", help="Set default batch for queries")
 
+    # API/server mode for React UI
+    parser.add_argument("--serve", action="store_true", help="Run HTTP API server for React UI")
+    parser.add_argument("--port", type=int, default=5000, help="Port for API server (default: 5000)")
+
     args = parser.parse_args()
 
     try:
         # Initialize managers
         batch_manager = BatchManager()
+
+        # If serve mode requested, start API server
+        if args.serve:
+            print(f"Starting API server on port {args.port} ...")
+            run_api_server(batch_manager, port=args.port)
+            return
 
         # Handle batch listing
         if args.list_batches:
