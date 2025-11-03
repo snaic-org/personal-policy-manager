@@ -1,27 +1,36 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { sendQuery } from '../services/api';
 import MessageFormatter from './MessageFormatter';
+import Upload from './Upload';
 
 export default function Chat() {
   const [query, setQuery] = useState('');
-  const [batch, setBatch] = useState('');
   const [loading, setLoading] = useState(false);
   const [history, setHistory] = useState([]);
   const messagesEndRef = useRef(null);
 
+  const addMessage = (role, text) => {
+     setHistory(prev => [...prev, { role, text }]);
+  };
+
   const handleSend = async () => {
     if (!query.trim()) return;
     setLoading(true);
+    addMessage('user', query);
+    setQuery('');
     try {
-      const res = await sendQuery(query, batch || undefined);
+      const res = await sendQuery(query);
       const text = res?.response ?? res?.error ?? 'No response';
-      setHistory(prev => [...prev, { role: 'user', text: query }, { role: 'bot', text }]);
-      setQuery('');
+      addMessage('bot', text);
     } catch (e) {
-      setHistory(prev => [...prev, { role: 'bot', text: `Error: ${e.message}` }]);
+      addMessage('bot', `Error: ${e.message}`);
     } finally {
       setLoading(false);
     }
+  };
+  
+  const handleUploadSuccess = () => {
+     addMessage('bot', 'Your documents have been processed. You can now ask questions about them.');
   };
 
   const scrollToBottom = () => {
@@ -35,7 +44,9 @@ export default function Chat() {
   return (
     <div className="chat-container">
       <div className="chat-messages">
-        {history.length === 0 && <div className="empty-state">No messages yet.</div>}
+        {history.length === 0 && <div className="empty-state">
+            Welcome! Ask a question, or upload your policy documents below.
+        </div>}
         {history.map((m, i) => (
           <div key={i} className={`message ${m.role}`}>
             <div className="message-header">{m.role === 'user' ? 'You' : 'Bot'}</div>
@@ -48,19 +59,14 @@ export default function Chat() {
       </div>
 
       <div className="chat-input-fixed">
+        <Upload onUploadSuccess={handleUploadSuccess} />
+      
         <div className="chat-input-container">
-          {/* <div className="batch-select">
-            <label>
-              Batch:{' '}
-              <input value={batch} onChange={e => setBatch(e.target.value)} placeholder="batch-id" />
-            </label>
-          </div> */}
-
           <div className="input-group">
             <input
               value={query}
               onChange={e => setQuery(e.target.value)}
-              placeholder="Ask a question..."
+              placeholder="Ask a question about your policies..."
               onKeyDown={e => { if (e.key === 'Enter') handleSend(); }}
             />
             <button onClick={handleSend} disabled={loading}>

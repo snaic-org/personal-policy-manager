@@ -55,10 +55,6 @@ class BatchManager:
                 "metadata_path": f"batches/{batch_id}/metadata.json"
             }
 
-            # Set as default if it's the first batch
-            if not registry["default_batch"]:
-                registry["default_batch"] = batch_id
-
             self._save_registry(registry)
             return True
         except Exception as e:
@@ -107,11 +103,14 @@ class BatchManager:
 
     def get_default_batch(self) -> Optional[str]:
         """Get the default batch."""
+        # This function is no longer very relevant, but we can leave it.
+        # The API layer should not rely on it.
         registry = self._load_registry()
         return registry.get("default_batch")
 
     def set_default_batch(self, batch_id: str) -> bool:
         """Set the default batch."""
+        # This is also less relevant, but we leave it for potential admin use.
         if not self.get_batch_info(batch_id):
             return False
 
