@@ -28,14 +28,11 @@ export default function UploadedFiles({ refreshTrigger }) {
       ) : files.length === 0 ? (
         <p>No files uploaded yet.</p>
       ) : (
-        <div>
+        <ul>
           {files.map((file, i) => (
-            <div key={i} className="file-list-item">
-              <div>{file}</div>
-              <div className="meta">{/* placeholder for date or size if available */}</div>
-            </div>
+            <li key={i}>{file}</li>
           ))}
-        </div>
+        </ul>
       )}
     </div>
   );
