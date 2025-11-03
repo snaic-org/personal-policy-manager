@@ -19,11 +19,11 @@ export async function login(username, password) {
   return data.access_token;
 }
 
-export async function register(username, password) {
+export async function register(username, password, passwordConfirm) {
   const res = await fetch(`${BASE}/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password })
+    body: JSON.stringify({ username, password, passwordConfirm })
   });
 
   if (!res.ok) {

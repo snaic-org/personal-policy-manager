@@ -5,6 +5,7 @@ export default function Auth({ onLogin }) {
   const [isRegister, setIsRegister] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordConfirm, setPasswordConfirm] = useState('');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
@@ -14,7 +15,12 @@ export default function Auth({ onLogin }) {
     setMessage('');
     try {
       if (isRegister) {
-        await register(username, password);
+        if (password !== passwordConfirm) {
+          setError('Passwords do not match.');
+          return;
+        }
+        await register(username, password, passwordConfirm);
+
         setMessage('Registration successful! Please log in.');
         setIsRegister(false);
       } else {
@@ -37,6 +43,7 @@ export default function Auth({ onLogin }) {
             value={username} 
             onChange={e => setUsername(e.target.value)} 
             required 
+            style={{ width: '100%', boxSizing: 'border-box' }}
           />
         </div>
         <div style={{ marginBottom: 10 }}>
@@ -46,13 +53,34 @@ export default function Auth({ onLogin }) {
             value={password} 
             onChange={e => setPassword(e.target.value)} 
             required 
+            style={{ width: '100%', boxSizing: 'border-box' }}
           />
         </div>
-        <button type="submit">{isRegister ? 'Register' : 'Login'}</button>
+
+        {isRegister && (
+          <div style={{ marginBottom: 10 }}>
+            <label>Re-enter Password: </label>
+            <input 
+              type="password" 
+              value={passwordConfirm} 
+              onChange={e => setPasswordConfirm(e.target.value)} 
+              required 
+              style={{ width: '100%', boxSizing: 'border-box' }}
+            />
+          </div>
+        )}
+
+        <button type="submit" style={{ width: '100%', padding: '8px' }}>
+          {isRegister ? 'Register' : 'Login'}
+        </button>
       </form>
       {error && <p style={{ color: 'red' }}>{error}</p>}
       {message && <p style={{ color: 'green' }}>{message}</p>}
-      <button onClick={() => { setIsRegister(!isRegister); setError(''); setMessage(''); }}>
+      
+      <button 
+        onClick={() => { setIsRegister(!isRegister); setError(''); setMessage(''); }}
+        style={{ width: '100%', marginTop: '10px', background: 'none', border: '1px solid #ccc', padding: '8px' }}
+      >
         {isRegister ? 'Switch to Login' : 'Switch to Register'}
       </button>
     </div>

@@ -43,7 +43,6 @@ db = SQLAlchemy(app)
 jwt = JWTManager(app)
 
 # --- Initialize Chatbot Components ---
-# These are now managed globally by the server
 batch_manager = BatchManager()
 query_processor = QueryProcessor(batch_manager)
 doc_processor = DocumentProcessor()
@@ -72,10 +71,14 @@ def register():
     data = request.get_json()
     username = data.get("username")
     password = data.get("password")
+    password_confirm = data.get("passwordConfirm")
 
-    if not username or not password:
-        return jsonify({"error": "Username and password are required"}), 400
+    if not username or not password or not password_confirm:
+        return jsonify({"error": "Username and password, and password confirmation are required"}), 400
 
+    if password != password_confirm:
+        return jsonify({"error": "Passwords do not match"}), 400
+    
     if User.query.filter_by(username=username).first():
         return jsonify({"error": "Username already exists"}), 409
 
@@ -102,8 +105,6 @@ def login():
     if not user or not user.check_password(password):
         return jsonify({"error": "Invalid username or password"}), 401
 
-    # FIX: Cast the identity (the user.id) to a string before creating the token.
-    # This is what resolves the "Subject must be a string" error.
     access_token = create_access_token(identity=str(user.id))
     return jsonify(access_token=access_token)
 
@@ -113,9 +114,7 @@ def login():
 @jwt_required()
 def upload_policies():
     try:
-        # FIX: The identity from the token is now a string, e.g., "1"
         user_id_str = get_jwt_identity()
-        # FIX: We must cast it back to an integer to query the database
         user_id_int = int(user_id_str)
         
         user = db.session.get(User, user_id_int) # Use the integer ID here
@@ -183,7 +182,7 @@ def upload_policies():
 @app.route('/list_files', methods=['GET'])
 @jwt_required()
 def list_files():
-    user_id = get_jwt_identity()  # assuming you use JWT auth
+    user_id = get_jwt_identity()
     user_folder = os.path.join('documents', f'user_{user_id}')
 
     if not os.path.exists(user_folder):
@@ -203,9 +202,7 @@ def health():
 def query_endpoint():
     try:
         # 1. Get user ID from their token
-        # FIX: The identity from the token is now a string, e.g., "1"
         user_id_str = get_jwt_identity()
-        # FIX: We must cast it back to an integer to query the database
         user_id_int = int(user_id_str)
 
         user = db.session.get(User, user_id_int) # Use the integer ID here
