@@ -49,7 +49,7 @@ export default function Chat() {
     <div className="chat-container">
       <div className="chat-messages">
         {history.length === 0 && <div className="empty-state">
-            Welcome! Ask a question, or upload your policy documents below.
+            Welcome! Ask a question, or upload your policy documents.
         </div>}
         {history.map((m, i) => (
           <div key={i} className={`message ${m.role}`}>
@@ -63,8 +63,6 @@ export default function Chat() {
       </div>
 
       <div className="chat-input-fixed">
-        <Upload onUploadSuccess={handleUploadSuccess} />
-        <UploadedFiles refreshTrigger={refresh} />
       
         <div className="chat-input-container">
           <div className="input-group">
@@ -74,7 +72,7 @@ export default function Chat() {
               placeholder="Ask a question about your policies..."
               onKeyDown={e => { if (e.key === 'Enter') handleSend(); }}
             />
-            <button onClick={handleSend} disabled={loading}>
+            <button className="btn primary" onClick={handleSend} disabled={loading}>
               {loading ? 'Sending...' : 'Send'}
             </button>
           </div>
