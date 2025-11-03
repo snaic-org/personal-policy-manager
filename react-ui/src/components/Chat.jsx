@@ -65,12 +65,20 @@ export default function Chat() {
       <div className="chat-input-fixed">
       
         <div className="chat-input-container">
-          <div className="input-group">
-            <input
+           <div className="input-group" style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+            <textarea
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder="Ask a question about your policies..."
-              onKeyDown={e => { if (e.key === 'Enter') handleSend(); }}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+              style={{
+                flex: 1,
+                padding: '8px 12px',
+                borderRadius: 6,
+                border: '1px solid #ccc',
+                lineHeight: '1.4em',
+                overflowY: 'auto',
+              }}
             />
             <button className="btn primary" onClick={handleSend} disabled={loading}>
               {loading ? 'Sending...' : 'Send'}
