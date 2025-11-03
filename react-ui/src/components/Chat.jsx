@@ -2,12 +2,15 @@ import React, { useState, useRef, useEffect } from 'react';
 import { sendQuery } from '../services/api';
 import MessageFormatter from './MessageFormatter';
 import Upload from './Upload';
+import UploadedFiles from './UploadedFiles';
 
 export default function Chat() {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [history, setHistory] = useState([]);
   const messagesEndRef = useRef(null);
+  const [refresh, setRefresh] = useState(false);
+
 
   const addMessage = (role, text) => {
      setHistory(prev => [...prev, { role, text }]);
@@ -31,7 +34,8 @@ export default function Chat() {
   
   const handleUploadSuccess = () => {
      addMessage('bot', 'Your documents have been processed. You can now ask questions about them.');
-  };
+     setRefresh(prev => !prev); // triggers UploadedFiles to re-fetch
+    };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -60,6 +64,7 @@ export default function Chat() {
 
       <div className="chat-input-fixed">
         <Upload onUploadSuccess={handleUploadSuccess} />
+        <UploadedFiles refreshTrigger={refresh} />
       
         <div className="chat-input-container">
           <div className="input-group">

@@ -179,6 +179,18 @@ def upload_policies():
         print(f"Error processing upload: {str(e)}")
         print(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
+    
+@app.route('/list_files', methods=['GET'])
+@jwt_required()
+def list_files():
+    user_id = get_jwt_identity()  # assuming you use JWT auth
+    user_folder = os.path.join('documents', f'user_{user_id}')
+
+    if not os.path.exists(user_folder):
+        return jsonify({"files": []})
+
+    files = os.listdir(user_folder)
+    return jsonify({"files": files})
 
 # --- Chatbot Endpoints ---
 

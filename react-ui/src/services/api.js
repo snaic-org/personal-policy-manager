@@ -90,3 +90,20 @@ export async function uploadPolicies(files) {
 
   return res.json();
 }
+
+// --- Get uploaded files Function ---
+export async function getUserFiles() {
+  const res = await fetch(`${BASE}/list_files`, {
+    method: 'GET',
+    headers: {
+      ...getAuthHeader()
+    }
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+
+  return res.json(); // will return { files: ["a.pdf", "b.docx"] }
+}
