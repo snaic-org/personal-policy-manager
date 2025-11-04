@@ -20,7 +20,6 @@ export default function Auth({ onLogin }) {
           return;
         }
         await register(username, password, passwordConfirm);
-
         setMessage('Registration successful! Please log in.');
         setIsRegister(false);
       } else {
@@ -33,56 +32,63 @@ export default function Auth({ onLogin }) {
   };
 
   return (
-    <div style={{ maxWidth: 400, margin: '40px auto', padding: 20, border: '1px solid #ccc', borderRadius: 8 }}>
-      <h2>{isRegister ? 'Register' : 'Login'}</h2>
-      <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: 10 }}>
-          <label>Username: </label>
-          <input 
-            type="text" 
-            value={username} 
-            onChange={e => setUsername(e.target.value)} 
-            required 
-            style={{ width: '100%', boxSizing: 'border-box' }}
-          />
-        </div>
-        <div style={{ marginBottom: 10 }}>
-          <label>Password: </label>
-          <input 
-            type="password" 
-            value={password} 
-            onChange={e => setPassword(e.target.value)} 
-            required 
-            style={{ width: '100%', boxSizing: 'border-box' }}
-          />
-        </div>
-
-        {isRegister && (
-          <div style={{ marginBottom: 10 }}>
-            <label>Re-enter Password: </label>
-            <input 
-              type="password" 
-              value={passwordConfirm} 
-              onChange={e => setPasswordConfirm(e.target.value)} 
-              required 
-              style={{ width: '100%', boxSizing: 'border-box' }}
+    <div className="auth-container">
+      <div className="auth-box">
+        <h2>{isRegister ? 'Register' : 'Login'}</h2>
+        <form onSubmit={handleSubmit} className="auth-form">
+          <div className="form-group">
+            <label htmlFor="username">Username</label>
+            <input
+              id="username"
+              type="text"
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+              required
+              className="form-input"
             />
           </div>
-        )}
+          <div className="form-group">
+            <label htmlFor="password">Password</label>
+            <input
+              id="password"
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              required
+              className="form-input"
+            />
+          </div>
 
-        <button type="submit" style={{ width: '100%', padding: '8px' }}>
-          {isRegister ? 'Register' : 'Login'}
+          {isRegister && (
+            <div className="form-group">
+              <label htmlFor="passwordConfirm">Re-enter Password</label>
+              <input
+                id="passwordConfirm"
+                type="password"
+                value={passwordConfirm}
+                onChange={e => setPasswordConfirm(e.target.value)}
+                required
+                className="form-input"
+              />
+            </div>
+          )}
+
+          {error && <p className="form-error">{error}</p>}
+          {message && <p className="form-message">{message}</p>}
+
+          <button type="submit" className="btn primary form-button">
+            {isRegister ? 'Register' : 'Login'}
+          </button>
+        </form>
+        
+        <button
+          type="button"
+          onClick={() => { setIsRegister(!isRegister); setError(''); setMessage(''); }}
+          className="form-switch-link"
+        >
+          {isRegister ? 'Already have an account? Login' : "Don't have an account? Register"}
         </button>
-      </form>
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-      {message && <p style={{ color: 'green' }}>{message}</p>}
-      
-      <button 
-        onClick={() => { setIsRegister(!isRegister); setError(''); setMessage(''); }}
-        style={{ width: '100%', marginTop: '10px', background: 'none', border: '1px solid #ccc', padding: '8px' }}
-      >
-        {isRegister ? 'Switch to Login' : 'Switch to Register'}
-      </button>
+      </div>
     </div>
   );
 }
