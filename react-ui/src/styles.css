@@ -1,107 +1,193 @@
-/* Use border-box so height includes padding/border */
+/* --- Global & Layout --- */
+:root {
+  --header-height: 70px;
+  --sidebar-width: 320px;
+  --input-height: 90px;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
 }
 
-/* Define header/footer heights to keep spacing consistent */
-:root {
-  --header-height: 70px;
-  --footer-height: 100px; /* includes input area + padding/shadow */
-}
-
-/* Prevent page scrolling, allow only messages to scroll */
-html, body {
+html, body, #root {
+  height: 100%;
   margin: 0;
   padding: 0;
-  height: 100%;
-  overflow: hidden; /* Prevent scrolling on the main document */
+  font-family: Arial, sans-serif;
+  overflow: hidden; /* Prevent body scroll */
+  background: #fdfdfd;
 }
 
-body {
-  background: #fafafa;
+/* --- Main App Container --- */
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh; /* Fill the entire viewport height */
 }
 
-/* Fixed header */
 .app-header {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
   height: var(--header-height);
+  flex-shrink: 0; /* Prevent header from shrinking */
   background: #fff;
-  padding: 0 16px; /* horizontal padding only — avoid changing total height */
+  padding: 0 24px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
   z-index: 100;
   display: flex;
   align-items: center;
+  justify-content: space-between; /* Pushes logout button to the right */
 }
 
 .app-header h2 {
-  max-width: 800px;
-  margin: 0 auto;
+  margin: 0;
 }
 
-/* Chat container sits below header and above fixed input */
-.chat-container {
-  max-width: 1000px;
-  margin: 0 auto;
-  font-family: Arial, sans-serif;
-  /* place container below header */
-  margin-top: var(--header-height);
-  /* ensure the overall container height fits between header and footer */
-  height: calc(100vh - var(--header-height) - var(--footer-height));
-  position: relative;
-  overflow: hidden;
+.logout-button-header {
+  padding: 8px 16px;
+  font-size: 14px;
+  background: #f44336;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.logout-button-header:hover {
+  background: #d32f2f;
 }
 
-/* Messages area fills container and scrolls internally */
-.chat-messages {
+/* This holds the sidebar + chat area */
+.app-main-content {
+  flex: 1; /* Grow to fill remaining height */
+  overflow: hidden; /* Prevent this from scrolling */
+  /* This ensures it starts *after* the header (since header is in flow) */
+}
+
+/* --- Auth Page Layout --- */
+/* Center the Auth component when it's the only thing */
+.app-main-content > div:not(.app-layout) {
   height: 100%;
-  overflow-y: auto; /* Scrolling allowed here only */
-  padding: 20px;
-  padding-bottom: 24px; /* space above the fixed input */
-  -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
-  box-sizing: border-box;
-}
-
-/* Fixed input/footer at bottom */
-.chat-input-fixed {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: var(--footer-height);
-  background: #fff;
-  box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
-  z-index: 100;
   display: flex;
   align-items: center;
+  justify-content: center;
+}
+
+/* --- Logged-in Two-Column Layout --- */
+.app-layout {
+  display: flex;
+  height: 100%; /* Fill the parent .app-main-content */
+}
+
+/* --- Sidebar --- */
+.sidebar {
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  background: #f9f9f9;
+  border-right: 1px solid #e0e0e0;
+  height: 100%; /* Fill the full height of .app-layout */
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-user-info {
+  padding: 20px;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0; /* Don't shrink the user info */
+}
+
+.sidebar-content {
+  flex: 1; /* Allow this part to grow and scroll */
+  overflow-y: auto;
+  padding: 20px;
+}
+
+/* Styles for Upload & UploadedFiles components */
+.sidebar-content h4 {
+  margin-top: 0;
+  border-bottom: 1px solid #ddd;
+  padding-bottom: 8px;
+}
+.sidebar-content > div { /* Targets Upload and UploadedFiles */
+  margin-bottom: 24px;
+}
+.sidebar-content input[type="file"] {
+  width: 100%;
+  margin-bottom: 10px;
+}
+.sidebar-content button {
+  width: 100%;
+  padding: 10px;
+  background: #1976d2;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.sidebar-content button:disabled {
+  background: #ccc;
+}
+.sidebar-content button:hover:not(:disabled) {
+  background: #1565c0;
+}
+.sidebar-content ul {
+  padding-left: 0; /* Remove default list padding */
+  list-style: none; /* Remove bullets */
+  margin: 0;
+  font-size: 14px;
+}
+.sidebar-content li {
+  margin-bottom: 8px;
+  word-break: break-all;
+}
+
+/* --- Main Chat Area --- */
+.chat-main {
+  flex: 1; /* Grow to fill remaining width */
+  display: flex;
+  flex-direction: column;
+  height: 100%; /* Fill the full height of .app-layout */
+  overflow: hidden;
+  background: #fff;
+}
+
+.chat-messages {
+  flex: 1; /* This part will grow and scroll */
+  overflow-y: auto;
+  padding: 20px;
 }
 
 .chat-input-container {
-  max-width: 800px;
-  margin: 0 auto;
-  padding: 12px 16px; /* match padding to fit within footer height */
-  width: 100%;
-  box-sizing: border-box;
+  flex-shrink: 0; /* Prevent from shrinking */
+  height: auto; /* Let it be determined by content */
+  min-height: var(--input-height);
+  max-height: 250px; /* Max height before container scrolls */
+  overflow-y: auto;
+  border-top: 1px solid #e0e0e0;
+  padding: 20px;
+  background: #fdfdfd;
+  box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
 }
 
-.batch-select {
-  margin-bottom: 12px;
-}
-
-/* Input group styling */
 .input-group {
   display: flex;
   gap: 8px;
+  max-width: 900px;
+  margin: 0 auto;
+  align-items: flex-end; /* Aligns button to bottom */
 }
 
-.input-group input {
+.input-group textarea {
   flex: 1;
   padding: 12px;
   border: 1px solid #ccc;
   border-radius: 4px;
   font-size: 16px;
+  font-family: Arial, sans-serif;
+  resize: none;
+  overflow: hidden;
+  max-height: 200px; /* Max height for textarea */
+  overflow-y: auto; /* Scrollbar if max-height is reached */
+  line-height: 1.4;
+  /* Fixed height for the button */
+  min-height: 48px; 
 }
 
 .input-group button {
@@ -111,121 +197,68 @@ body {
   border: none;
   border-radius: 4px;
   cursor: pointer;
+  font-size: 16px;
+  height: 48px; /* Fixed height for button */
 }
-
 .input-group button:disabled {
   background: #ccc;
 }
 
-/* Message styles */
+/* --- Message Styles --- */
 .message {
   margin-bottom: 16px;
   padding: 16px;
   border-radius: 8px;
   background: #fff;
   box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  max-width: 80%;
+  line-height: 1.5; /* Added for better readability */
 }
-
 .message.user {
   background: #e3f2fd;
-  margin-left: 20%;
+  margin-left: auto;
 }
-
 .message.bot {
-  background: #fff;
-  margin-right: 20%;
+  background: #f1f1f1;
+  margin-right: auto;
 }
-
 .message-header {
   font-weight: bold;
   margin-bottom: 8px;
   color: #666;
 }
-
-.formatted-message {
-  line-height: 1.5;
+.empty-state {
+  text-align: center;
+  color: #666;
+  padding-top: 40px;
 }
 
+/* Message Formatter */
+.formatted-message {
+  line-height: 1.5;
+  white-space: pre-wrap; /* Respect newlines in the bot's response */
+}
 .message-section {
   margin-bottom: 16px;
 }
-
 .section-title {
   margin: 0 0 8px;
   color: #1976d2;
   font-size: 1.1em;
 }
-
 .section-content {
   margin-left: 16px;
 }
-
+/* Ensure paragraphs and lists inside formatted message are styled */
+.section-content p {
+  margin: 0 0 8px;
+}
 .section-content li {
   margin-bottom: 4px;
   list-style-type: disc;
 }
 
-/* Empty state centered within messages area */
-.empty-state {
-  text-align: center;
-  color: #666;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  padding-top: 8px; /* small offset so it's not touching header */
-}
-
-/* Button utilities */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 10px 14px;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.12s ease-in-out;
-  user-select: none;
-}
-
-.btn.primary {
-  background: linear-gradient(180deg,#1976d2,#1160b6);
-  color: #fff;
-  box-shadow: 0 4px 10px rgba(17,85,204,0.12);
-}
-
-.btn.primary.login {
-  background: #d0d0d0;
-  color: #444c54;
-  border: 1px solid #cfe3fb;
-}
-
-.btn.primary:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 18px rgba(17,85,204,0.16);
-}
-
-.btn.secondary {
-  background: #fff;
-  color: #1976d2;
-  border: 1px solid #cfe3fb;
-}
-
-.btn.secondary:hover {
-  background: #f5fbff;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
-}
-
-/* Uploaded file list items */
+/* File list from UploadedFiles.jsx */
 .file-list-item {
   padding: 8px 10px;
   margin: 6px 0;
@@ -235,6 +268,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  font-size: 0.9em;
 }
 
 .file-list-item .meta {
