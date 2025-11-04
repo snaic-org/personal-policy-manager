@@ -24,7 +24,7 @@ export default function Upload({ onUploadSuccess }) {
     try {
       const res = await uploadPolicies(files);
       setMessage(res.message);
-      onUploadSuccess(); // Notify chat to send a new message
+      onUploadSuccess(); // Notify chat and refresh file list
     } catch (e) {
       setError(e.message);
     } finally {
@@ -36,19 +36,22 @@ export default function Upload({ onUploadSuccess }) {
   };
 
   return (
-    <div style={{ padding: '10px 16px', borderTop: '1px solid #eee' }}>
+    <div className="upload-container">
       <h4>Upload Your Policies</h4>
-      <label htmlFor="file-input" className="btn secondary" style={{ display: 'inline-block', marginBottom: 8 }}>
-        Choose Files
+      
+      {/* This label acts as the drop zone */}
+      <label 
+        htmlFor="file-input" 
+        className={`file-drop-zone ${files.length > 0 ? 'has-files' : ''}`}
+      >
+        {files.length === 0 ? (
+          <span>Drag & drop files here, or click to select</span>
+        ) : (
+          <span>{files.length} file(s) selected</span>
+        )}
       </label>
-      {files.length > 0 && (
-        <ul style={{ paddingLeft: 20, color: '#444', fontSize: '0.95em' }}>
-          {files.map((file, idx) => (
-            <li key={idx}>{file.name}</li>
-          ))}
-        </ul>
-      )}
-      <input className="btn primary"
+      
+      <input
         id="file-input"
         type="file" 
         multiple 
@@ -56,12 +59,16 @@ export default function Upload({ onUploadSuccess }) {
         accept=".pdf,.docx,.txt,.md"
         style={{ display: 'none' }} // hide actual input
       />
-      <button className="btn primary" onClick={handleUpload} disabled={loading}>
-        {loading ? 'Processing...' : 'Upload & Process Files'}
-      </button>
 
-      {error && <p style={{ color: 'red', margin: '5px 0 0' }}>{error}</p>}
-      {message && <p style={{ color: 'green', margin: '5px 0 0' }}>{message}</p>}
+      {/* Show upload button only when files are staged */}
+      {files.length > 0 && (
+        <button className="btn primary" onClick={handleUpload} disabled={loading} style={{ width: '100%', marginTop: '10px' }}>
+          {loading ? 'Processing...' : `Upload ${files.length} File(s)`}
+        </button>
+      )}
+
+      {error && <p className="form-error" style={{ margin: '10px 0 0' }}>{error}</p>}
+      {message && <p className="form-message" style={{ margin: '10px 0 0' }}>{message}</p>}
     </div>
   );
 }

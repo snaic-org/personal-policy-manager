@@ -3,6 +3,10 @@
   --header-height: 70px;
   --sidebar-width: 320px;
   --input-height: 90px;
+  --primary-color: #1976d2;
+  --danger-color: #d32f2f;
+  --light-gray-border: #e0e0e0;
+  --light-gray-bg: #f9f9f9;
 }
 
 *, *::before, *::after {
@@ -14,7 +18,7 @@ html, body, #root {
   margin: 0;
   padding: 0;
   font-family: Arial, sans-serif;
-  overflow: hidden; /* Prevent body scroll */
+  overflow: hidden;
   background: #fdfdfd;
 }
 
@@ -51,7 +55,7 @@ html, body, #root {
   cursor: pointer;
 }
 .logout-button-header:hover {
-  background: #d32f2f;
+  background: var(--danger-color);
 }
 
 .app-main-content {
@@ -63,10 +67,10 @@ html, body, #root {
 .app-main-content > div:not(.app-layout) {
   height: 100%;
   display: flex;
-  align-items: flex-start; /* Align to top */
+  align-items: flex-start;
   justify-content: center;
-  padding-top: 50px; /* Give some space from the header */
-  overflow-y: auto; /* Allow auth box to scroll on small screens */
+  padding-top: 50px;
+  overflow-y: auto;
 }
 
 /* --- Logged-in Two-Column Layout --- */
@@ -79,8 +83,8 @@ html, body, #root {
 .sidebar {
   width: var(--sidebar-width);
   flex-shrink: 0;
-  background: #f9f9f9;
-  border-right: 1px solid #e0e0e0;
+  background: var(--light-gray-bg);
+  border-right: 1px solid var(--light-gray-border);
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -88,7 +92,7 @@ html, body, #root {
 
 .sidebar-user-info {
   padding: 20px;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--light-gray-border);
   flex-shrink: 0;
 }
 
@@ -100,30 +104,118 @@ html, body, #root {
 
 .sidebar-content h4 {
   margin-top: 0;
+  margin-bottom: 16px;
   border-bottom: 1px solid #ddd;
   padding-bottom: 8px;
 }
-.sidebar-content > div {
+.sidebar-content > div { /* Targets Upload and FileList containers */
   margin-bottom: 24px;
 }
-.sidebar-content input[type="file"] {
+
+/* --- File Upload (Upload.jsx) --- */
+.file-drop-zone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
-  margin-bottom: 10px;
+  height: 100px;
+  border: 2px dashed #ccc;
+  border-radius: 8px;
+  background: #fff;
+  color: #777;
+  font-size: 14px;
+  text-align: center;
+  padding: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
 }
-/* This will now be styled by .btn.primary */
-.sidebar-content button {
-  width: 100%;
+.file-drop-zone:hover {
+  border-color: var(--primary-color);
+  background: #f4f8ff;
+}
+.file-drop-zone.has-files {
+  border-color: #2e7d32;
+  background: #e8f5e9;
+  color: #2e7d32;
+  font-weight: 600;
 }
 
-.sidebar-content ul {
+/* --- File List (UploadedFiles.jsx) --- */
+.file-list-container {
+  padding-top: 16px;
+  border-top: 1px solid var(--light-gray-border);
+}
+.file-list {
   padding-left: 0;
   list-style: none;
   margin: 0;
+  max-height: 250px;
+  overflow-y: auto;
+}
+.file-list-message {
+  font-size: 14px;
+  color: #777;
+  text-align: center;
+  padding: 10px 0;
+}
+.file-list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  margin: 6px 0;
+  background: #fff;
+  border-radius: 6px;
+  border: 1px solid var(--light-gray-border);
   font-size: 14px;
 }
-.sidebar-content li {
-  margin-bottom: 8px;
-  word-break: break-all;
+.file-icon {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  border-radius: 4px;
+  padding: 4px 6px;
+  text-transform: uppercase;
+  line-height: 1;
+}
+.file-icon.pdf { background: #e53935; }
+.file-icon.doc { background: #1976d2; }
+.file-icon.txt { background: #546e7a; }
+.file-icon.file { background: #999; }
+
+.file-name {
+  flex: 1;
+  color: #333;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.file-delete-btn {
+  background: #fbebee;
+  color: var(--danger-color);
+  border: 1px solid #f44336;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 22px;
+  text-align: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.file-delete-btn:hover:not(:disabled) {
+  background: var(--danger-color);
+  color: white;
+}
+.file-delete-btn:disabled {
+  background: #ccc;
+  border-color: #999;
+  color: #777;
+  cursor: not-allowed;
 }
 
 /* --- Main Chat Area --- */
@@ -135,25 +227,22 @@ html, body, #root {
   overflow: hidden;
   background: #fff;
 }
-
 .chat-messages {
   flex: 1;
   overflow-y: auto;
   padding: 20px;
 }
-
 .chat-input-container {
   flex-shrink: 0;
   height: auto;
   min-height: var(--input-height);
   max-height: 250px;
   overflow-y: auto;
-  border-top: 1px solid #e0e0e0;
+  border-top: 1px solid var(--light-gray-border);
   padding: 20px;
   background: #fdfdfd;
   box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
 }
-
 .input-group {
   display: flex;
   gap: 8px;
@@ -161,7 +250,6 @@ html, body, #root {
   margin: 0 auto;
   align-items: flex-end;
 }
-
 .input-group textarea {
   flex: 1;
   padding: 12px;
@@ -177,7 +265,7 @@ html, body, #root {
   min-height: 48px;
 }
 
-/* --- GENERIC BUTTON STYLES (Replaces .input-group button) --- */
+/* --- GENERIC BUTTON STYLES --- */
 .btn {
   padding: 12px 24px;
   border: none;
@@ -191,7 +279,7 @@ html, body, #root {
   transition: background-color 0.2s;
 }
 .btn.primary {
-  background: #1976d2;
+  background: var(--primary-color);
   color: white;
 }
 .btn.primary:hover:not(:disabled) {
@@ -209,8 +297,6 @@ html, body, #root {
 .btn.secondary:hover:not(:disabled) {
   background: #e0e0e0;
 }
-/* --- END GENERIC BUTTON STYLES --- */
-
 
 /* --- Message Styles --- */
 .message {
@@ -251,7 +337,7 @@ html, body, #root {
 }
 .section-title {
   margin: 0 0 8px;
-  color: #1976d2;
+  color: var(--primary-color);
   font-size: 1.1em;
 }
 .section-content {
@@ -265,24 +351,6 @@ html, body, #root {
   list-style-type: disc;
 }
 
-/* File list from UploadedFiles.jsx */
-.file-list-item {
-  padding: 8px 10px;
-  margin: 6px 0;
-  background: #fff;
-  border-radius: 6px;
-  border: 1px solid #f0f0f0;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 0.9em;
-}
-
-.file-list-item .meta {
-  color: #666;
-  font-size: 0.9em;
-}
-
 /* --- Auth Page --- */
 .auth-container {
   width: 100%;
@@ -292,42 +360,36 @@ html, body, #root {
   align-items: flex-start;
   padding-top: 80px;
 }
-
 .auth-box {
   width: 100%;
   max-width: 400px;
   padding: 32px;
   background: #fff;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--light-gray-border);
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.05);
 }
-
 .auth-box h2 {
   text-align: center;
   margin-top: 0;
   margin-bottom: 24px;
   color: #333;
 }
-
 .auth-form {
   display: flex;
   flex-direction: column;
 }
-
 .form-group {
   margin-bottom: 16px;
   display: flex;
   flex-direction: column;
 }
-
 .form-group label {
   margin-bottom: 6px;
   font-weight: 600;
   font-size: 14px;
   color: #555;
 }
-
 .form-input {
   padding: 12px;
   font-size: 16px;
@@ -335,22 +397,19 @@ html, body, #root {
   border-radius: 4px;
   width: 100%;
 }
-
 .form-button {
   width: 100%;
   margin-top: 8px;
 }
-
 .form-error {
-  color: #d32f2f;
-  background: #ffeeee;
-  border: 1px solid #d32f2f;
+  color: var(--danger-color);
+  background: #fbebee;
+  border: 1px solid var(--danger-color);
   padding: 10px;
   border-radius: 4px;
   text-align: center;
   font-size: 14px;
 }
-
 .form-message {
   color: #2e7d32;
   background: #e8f5e9;
@@ -360,13 +419,12 @@ html, body, #root {
   text-align: center;
   font-size: 14px;
 }
-
 .form-switch-link {
   width: 100%;
   margin-top: 16px;
   background: none;
   border: none;
-  color: #1976d2;
+  color: var(--primary-color);
   cursor: pointer;
   text-decoration: underline;
   font-size: 14px;

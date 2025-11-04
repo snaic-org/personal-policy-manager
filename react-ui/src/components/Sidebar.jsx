@@ -18,7 +18,10 @@ export default function Sidebar({ user, onUploadSuccess, refreshTrigger }) {
       {/* This part will scroll if content is long */}
       <div className="sidebar-content">
         <Upload onUploadSuccess={onUploadSuccess} />
-        <UploadedFiles refreshTrigger={refreshTrigger} />
+        <UploadedFiles
+            refreshTrigger={refreshTrigger}
+            onFileChange={onUploadSuccess}
+        />
       </div>
     </aside>
   );

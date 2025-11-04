@@ -123,3 +123,22 @@ export async function getUserFiles() {
 
   return res.json(); // will return { files: ["a.pdf", "b.docx"] }
 }
+
+// --- Delete file Function ---
+export async function deletePolicy(filename) {
+  const res = await fetch(`${BASE}/delete_file`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeader()
+    },
+    body: JSON.stringify({ filename })
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+
+  return res.json();
+}
