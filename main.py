@@ -108,6 +108,28 @@ def login():
     access_token = create_access_token(identity=str(user.id))
     return jsonify(access_token=access_token)
 
+@app.route("/me", methods=["GET"])
+@jwt_required()
+def get_user_info():
+    """Gets the current logged-in user's details."""
+    try:
+        user_id_str = get_jwt_identity()
+        user_id_int = int(user_id_str)
+        
+        user = db.session.get(User, user_id_int)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+            
+        return jsonify({
+            "id": user.id,
+            "username": user.username
+        }), 200
+        
+    except Exception as e:
+        print(f"Error getting user info: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
 # --- Document Management Endpoints ---
 
 @app.route("/upload", methods=["POST"])

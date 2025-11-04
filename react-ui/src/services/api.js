@@ -45,6 +45,22 @@ function getAuthHeader() {
   return { 'Authorization': `Bearer ${token}` };
 }
 
+export async function getUserInfo() {
+  const res = await fetch(`${BASE}/me`, {
+    method: 'GET',
+    headers: {
+      ...getAuthHeader()
+    }
+  });
+  
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  
+  return res.json(); // returns { id: 1, username: 'testuser' }
+}
+
 // --- Chatbot Functions ---
 
 export async function sendQuery(query) {

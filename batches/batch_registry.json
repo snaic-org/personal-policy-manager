@@ -19,36 +19,6 @@
       "faiss_path": "batches/cfo_financials/faiss_index",
       "bm25_path": "batches/cfo_financials/bm25_index.pkl",
       "metadata_path": "batches/cfo_financials/metadata.json"
-    },
-    "user_1": {
-      "id": "user_1",
-      "name": "a's Policies",
-      "description": "Personal policies for user a",
-      "doc_count": 6,
-      "created_at": "2025-11-03T23:30:42.504790",
-      "faiss_path": "batches/user_1/faiss_index",
-      "bm25_path": "batches/user_1/bm25_index.pkl",
-      "metadata_path": "batches/user_1/metadata.json"
-    },
-    "user_2": {
-      "id": "user_2",
-      "name": "b's Policies",
-      "description": "Personal policies for user b",
-      "doc_count": 3,
-      "created_at": "2025-11-03T23:56:14.310517",
-      "faiss_path": "batches/user_2/faiss_index",
-      "bm25_path": "batches/user_2/bm25_index.pkl",
-      "metadata_path": "batches/user_2/metadata.json"
-    },
-    "user_3": {
-      "id": "user_3",
-      "name": "c's Policies",
-      "description": "Personal policies for user c",
-      "doc_count": 2,
-      "created_at": "2025-11-04T00:00:27.038777",
-      "faiss_path": "batches/user_3/faiss_index",
-      "bm25_path": "batches/user_3/bm25_index.pkl",
-      "metadata_path": "batches/user_3/metadata.json"
     }
   },
   "default_batch": "insurance",
