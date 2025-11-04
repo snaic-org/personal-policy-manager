@@ -139,6 +139,14 @@ html, body, #root {
   color: #2e7d32;
   font-weight: 600;
 }
+.file-drop-zone.is-dragging {
+  border-color: var(--primary-color);
+  border-style: solid; /* Change from dashed to solid */
+  background: #f4f8ff;
+  color: var(--primary-color);
+  font-weight: 600;
+  transform: scale(1.02); /* Slight scale effect */
+}
 
 /* --- File List (UploadedFiles.jsx) --- */
 .file-list-container {

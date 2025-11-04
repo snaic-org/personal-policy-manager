@@ -6,9 +6,11 @@ export default function Upload({ onUploadSuccess }) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [isDragging, setIsDragging] = useState(false); // <-- ADDED: State for drag UI
 
   const handleFileChange = (e) => {
-    setFiles(Array.from(e.target.files));
+    const chosenFiles = Array.from(e.target.files);
+    setFiles(chosenFiles);
     setMessage('');
     setError('');
   };
@@ -30,22 +32,61 @@ export default function Upload({ onUploadSuccess }) {
     } finally {
       setLoading(false);
       setFiles([]);
-      // Clear the file input visually
-      document.getElementById('file-input').value = null;
+      if (document.getElementById('file-input')) {
+        document.getElementById('file-input').value = null;
+      }
     }
   };
+
+  // --- START: NEW DRAG-AND-DROP HANDLERS ---
+  const handleDragOver = (e) => {
+    e.preventDefault(); // Prevent browser from opening file
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault(); // Prevent browser from opening file
+    setIsDragging(false);
+    
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    if (droppedFiles.length === 0) return;
+
+    // Optional: Filter files by accepted types
+    const acceptedTypes = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain', 'text/markdown'];
+    const validFiles = droppedFiles.filter(file => 
+      acceptedTypes.includes(file.type) || 
+      file.name.endsWith('.pdf') || 
+      file.name.endsWith('.docx') || 
+      file.name.endsWith('.txt') || 
+      file.name.endsWith('.md')
+    );
+
+    setFiles(validFiles);
+    setMessage('');
+    setError('');
+  };
+  // --- END: NEW DRAG-AND-DROP HANDLERS ---
 
   return (
     <div className="upload-container">
       <h4>Upload Your Policies</h4>
       
-      {/* This label acts as the drop zone */}
       <label 
         htmlFor="file-input" 
-        className={`file-drop-zone ${files.length > 0 ? 'has-files' : ''}`}
+        className={`file-drop-zone ${files.length > 0 ? 'has-files' : ''} ${isDragging ? 'is-dragging' : ''}`}
+        onDragOver={handleDragOver}   // <-- ADDED
+        onDragLeave={handleDragLeave} // <-- ADDED
+        onDrop={handleDrop}           // <-- ADDED
       >
-        {files.length === 0 ? (
-          <span>Drag & drop files here, or click to select</span>
+        {isDragging ? (
+          <span>Drop files here...</span>
+        ) : files.length === 0 ? (
+          <span>Drag & drop files, or click to select</span>
         ) : (
           <span>{files.length} file(s) selected</span>
         )}
@@ -60,7 +101,6 @@ export default function Upload({ onUploadSuccess }) {
         style={{ display: 'none' }} // hide actual input
       />
 
-      {/* Show upload button only when files are staged */}
       {files.length > 0 && (
         <button className="btn primary" onClick={handleUpload} disabled={loading} style={{ width: '100%', marginTop: '10px' }}>
           {loading ? 'Processing...' : `Upload ${files.length} File(s)`}
