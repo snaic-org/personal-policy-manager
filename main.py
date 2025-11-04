@@ -206,10 +206,10 @@ def upload_policies():
         return jsonify({"error": str(e)}), 500
     
 
-@app.route('/delete_file', methods=['POST'])
+@app.route('/delete_files', methods=['POST'])
 @jwt_required()
-def delete_file():
-    """Deletes a file and re-processes the user's batch."""
+def delete_files():
+    """Deletes one or more files and re-processes the user's batch once."""
     try:
         user_id_str = get_jwt_identity()
         user_id_int = int(user_id_str)
@@ -218,37 +218,48 @@ def delete_file():
             return jsonify({"error": "User not found"}), 404
 
         data = request.get_json()
-        filename = data.get("filename")
-        if not filename:
-            return jsonify({"error": "Filename is required"}), 400
-
-        # Secure the filename
-        safe_filename = secure_filename(filename)
-        if safe_filename != filename:
-            return jsonify({"error": "Invalid filename"}), 400
+        filenames = data.get("filenames")
+        if not filenames or not isinstance(filenames, list):
+            return jsonify({"error": "A list of 'filenames' is required"}), 400
 
         batch_id = user.get_batch_id()
         user_doc_dir = Path(app.config['UPLOAD_FOLDER']) / batch_id
-        filepath = user_doc_dir / safe_filename
+        
+        deleted_count = 0
+        deleted_files_list = []
 
-        if not filepath.exists():
-            return jsonify({"error": "File not found"}), 404
+        # 1. Delete all requested files first
+        for filename in filenames:
+            safe_filename = secure_filename(filename)
+            if safe_filename != filename:
+                print(f"Skipping invalid filename: {filename}")
+                continue # Skip potentially malicious filenames
 
-        # 1. Delete the file
-        os.remove(filepath)
-        print(f"Deleted file: {filepath}")
+            filepath = user_doc_dir / safe_filename
 
-        # 2. Re-process the batch
+            if filepath.exists():
+                os.remove(filepath)
+                deleted_count += 1
+                deleted_files_list.append(safe_filename)
+                print(f"Deleted file: {filepath}")
+            else:
+                print(f"File not found, skipping: {filepath}")
+
+        if deleted_count == 0:
+            return jsonify({"error": "No valid files were found to delete"}), 404
+
+
+        # 2. Re-process the batch *once*
         # Find all *remaining* document files
         document_files = []
         for ext in ['*.pdf', '*.docx', '*.txt', '*.md']:
             document_files.extend(Path(user_doc_dir).glob(ext))
 
         if not document_files:
-            # User deleted their last file. Remove the batch entirely.
+            # User deleted their last file(s). Remove the batch entirely.
             if batch_manager.delete_batch(batch_id):
-                print(f"User deleted last file. Batch '{batch_id}' removed.")
-                return jsonify({"message": f"Successfully deleted {filename}. All policies removed."})
+                print(f"User deleted last files. Batch '{batch_id}' removed.")
+                return jsonify({"message": f"Successfully deleted {deleted_count} files. All policies removed."})
             else:
                 return jsonify({"error": "Failed to delete final batch"}), 500
         
@@ -262,12 +273,12 @@ def delete_file():
         )
 
         if not success:
-            return jsonify({"error": "File deleted, but failed to re-process remaining documents"}), 500
+            return jsonify({"error": "Files deleted, but failed to re-process remaining documents"}), 500
 
-        return jsonify({"message": f"Successfully deleted {filename} and re-processed policies."}), 200
+        return jsonify({"message": f"Successfully deleted {deleted_count} files and re-processed policies."}), 200
 
     except Exception as e:
-        print(f"Error deleting file: {str(e)}")
+        print(f"Error deleting files: {str(e)}")
         print(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 

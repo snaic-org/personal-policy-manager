@@ -145,6 +145,27 @@ html, body, #root {
   padding-top: 16px;
   border-top: 1px solid var(--light-gray-border);
 }
+.file-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #ddd;
+  padding-bottom: 8px;
+  margin-bottom: 8px; /* Add margin */
+}
+.file-list-header h4 {
+  margin: 0;
+  border: none; /* Remove duplicate border */
+  padding: 0;
+}
+.file-list-select-all {
+  font-size: 13px;
+  color: #555;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
 .file-list {
   padding-left: 0;
   list-style: none;
@@ -168,6 +189,13 @@ html, body, #root {
   border-radius: 6px;
   border: 1px solid var(--light-gray-border);
   font-size: 14px;
+}
+.file-list-checkbox {
+  flex-shrink: 0;
+  margin: 0;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
 }
 .file-icon {
   flex-shrink: 0;
@@ -296,6 +324,18 @@ html, body, #root {
 }
 .btn.secondary:hover:not(:disabled) {
   background: #e0e0e0;
+}
+
+.btn.danger {
+  background: var(--danger-color);
+  color: white;
+}
+.btn.danger:hover:not(:disabled) {
+  background: #c62828;
+}
+.btn.danger:disabled {
+  background: #ccc;
+  cursor: not-allowed;
 }
 
 /* --- Message Styles --- */

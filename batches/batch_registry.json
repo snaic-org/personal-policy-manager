@@ -4,14 +4,14 @@
       "id": "user_1",
       "name": "test's Policies",
       "description": "Personal policies for user test",
-      "doc_count": 3,
-      "chunk_count": 173,
-      "created_at": "2025-11-04T22:10:03.622388",
+      "doc_count": 1,
+      "chunk_count": 33,
+      "created_at": "2025-11-04T23:59:48.808653",
       "faiss_path": "batches/user_1/faiss_index",
       "bm25_path": "batches/user_1/bm25_index.pkl",
       "metadata_path": "batches/user_1/metadata.json"
     }
   },
   "default_batch": null,
-  "last_modified": "2025-11-04T22:10:03.623391"
+  "last_modified": "2025-11-04T23:59:48.809659"
 }

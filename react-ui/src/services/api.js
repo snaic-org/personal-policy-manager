@@ -125,14 +125,14 @@ export async function getUserFiles() {
 }
 
 // --- Delete file Function ---
-export async function deletePolicy(filename) {
-  const res = await fetch(`${BASE}/delete_file`, {
+export async function deletePolicies(filenames) {
+  const res = await fetch(`${BASE}/delete_files`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...getAuthHeader()
     },
-    body: JSON.stringify({ filename })
+    body: JSON.stringify({ filenames })
   });
 
   if (!res.ok) {
