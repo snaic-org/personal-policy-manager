@@ -49,11 +49,12 @@ class EmbeddingGenerator:
             # Process in batches to avoid API limits
             for i in range(0, len(texts), batch_size):
                 batch = texts[i:i + batch_size]
+
                 print(f"Generating embeddings for batch {i//batch_size + 1}/{(len(texts)-1)//batch_size + 1}")
 
                 response = self.client.embeddings.create(
                     model=self.model_name,
-                    input=batch
+                    input=batch # We assume the input is already clean
                 )
 
                 batch_embeddings = [np.array(data.embedding) for data in response.data]

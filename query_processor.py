@@ -2,6 +2,9 @@
 Query Processor
 Handles domain-agnostic query processing using hybrid FAISS + BM25 search.
 Loads user profile for personalized responses within specific batches (e.g., 'my_policies').
+
+* This is the "Comprehensive" version that relies on the detailed user_profile.json
+* to provide facts and uses the document chunks only for citation.
 """
 
 import os
@@ -16,6 +19,16 @@ from utils.search import HybridSearchEngine
 from batch_manager import BatchManager
 
 class QueryProcessor:
+
+    # Static Keyword Dictionary for high-priority, known semantic gaps. Not sure if we want to keep.
+    STATIC_KEYWORD_MAP = {
+        "collision damage waiver": "rental vehicle excess",
+        "cdw": "rental vehicle excess",
+        "rental car insurance": "rental vehicle excess",
+        "accident in singapore": "medical expenses while in Singapore",
+        "motorcycle accident in singapore": "medical expenses while in Singapore",
+    }
+
     def __init__(self, batch_manager: BatchManager):
         self.batch_manager = batch_manager
         self.search_engine = None
@@ -114,6 +127,57 @@ class QueryProcessor:
         print(f"Filtered results to {len(filtered_results)} chunks based on {len(owned_policies)} owned policies.")
         return filtered_results
 
+    def _expand_query(self, query: str) -> str:
+        """
+        Expands the user query using a hybrid approach:
+        1. Check a static map for known, high-value synonyms.
+        2. If no static match, fall back to an LLM for dynamic expansion.
+        """
+
+        original_query_lower = query.lower()
+        static_keywords_to_add = set()
+
+        for key, value in self.STATIC_KEYWORD_MAP.items():
+            if key in original_query_lower:
+                static_keywords_to_add.add(value)
+
+        if static_keywords_to_add:
+            expanded_query = f"{query} {' '.join(static_keywords_to_add)}"
+            print(f"Query expanded (STATIC) to: {expanded_query}")
+            return expanded_query
+
+        print("No static keywords found, using dynamic LLM expansion...")
+        try:
+            expansion_prompt = f"""
+            You are an insurance policy expert. A user is asking a question.
+            Your task is to list 5 to 7 technical synonyms or related insurance policy terms
+            for the concepts in the user's query to improve search.
+            
+            Focus on *policy benefit language*, not general chatter.
+            Do not answer the question. Only output a list of 5-7 related keywords, separated by spaces.
+            
+            User Query: "{query}"
+            
+            Related Keywords:
+            """
+
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini", # Keep mini here, it's cheap and fast for this task
+                messages=[{"role": "user", "content": expansion_prompt}],
+                max_tokens=50,
+                temperature=0.1,
+            )
+
+            keywords = response.choices[0].message.content.strip().replace(",", " ").replace("\n", " ")
+            expanded_query = f"{query} {keywords}"
+
+            print(f"Query expanded (DYNAMIC) to: {expanded_query}")
+            return expanded_query
+
+        except Exception as e:
+            print(f"Error during query expansion: {e}")
+            return query # Fallback to original query on error
+
     def process_query(self, query: str, batch_id: str = None) -> str:
         """Process a query and return the response."""
         try:
@@ -130,28 +194,23 @@ class QueryProcessor:
             print(f"\nProcessing query for batch: {target_batch}")
             print(f"Query: {query}")
 
-            # --- Step 1: Perform Hybrid Search ---
-            # Retrieve a larger set initially to allow for filtering
+            expanded_query = self._expand_query(query)
+
             raw_search_results = self.search_engine.hybrid_search(
-                query=query,
-                top_k=20 # Get more results initially
+                query=expanded_query, # Use the expanded query
+                top_k=50
             )
             print(f"Retrieved {len(raw_search_results)} raw results from hybrid search.")
 
-            # --- Step 2: Filter based on Profile (if applicable) ---
-            # Define which batches should trigger personalization (e.g., based on name convention)
-            is_personal_batch = (target_batch == "my_policies") # Example condition
+            is_personal_batch = (target_batch == "my_policies")
 
             relevant_results = raw_search_results
             if is_personal_batch:
                 if self.user_profile:
                     relevant_results = self._filter_results_by_profile(raw_search_results)
                 else:
-                    # Decide behavior: proceed without filtering or return an error/warning?
                     print("Warning: Operating in personal batch mode but no user profile loaded.")
-                    # Let's proceed without filtering in this case, but log it.
 
-            # --- Step 3: Deduplicate ---
             unique_results = self._deduplicate_results(relevant_results)
             print(f"Retained {len(unique_results)} unique relevant chunks after filtering/deduplication.")
 
@@ -161,7 +220,6 @@ class QueryProcessor:
                 else:
                     return f"No relevant information found in the documents of batch '{target_batch}' for the question: '{query}'."
 
-            # --- Step 4: Generate Response ---
             response = self._generate_response(query, unique_results, is_personal_batch)
 
             processing_time = time.time() - start_time
@@ -179,80 +237,87 @@ class QueryProcessor:
     def _generate_response(self, original_query: str, search_results: List[Dict], is_personal_batch: bool) -> str:
         """Generate comprehensive response using retrieved chunks and potentially user profile."""
         if not search_results:
-            # This check is slightly redundant due to the check in process_query, but safe to keep.
             return "I couldn't find any relevant information in the documents to answer your question."
 
-        # --- Build Context String ---
         context_parts = []
-        max_chunks_for_context = 15 # Limit context size for LLM
+        max_chunks_for_context = 15
+        cited_filenames = set() # keeps track of which documents we found
 
         print(f"Building context from top {min(len(search_results), max_chunks_for_context)} chunks...")
         for i, result in enumerate(search_results[:max_chunks_for_context], 1):
             content = result.get('content', '').strip()
             metadata = result.get('metadata', {})
-            if content: # Ensure content is not empty
+            if content:
                 filename = metadata.get('filename', 'Unknown Document')
                 page = metadata.get('page_number', 'N/A')
-                # Use a consistent source format
                 source_ref = f"[Source {i}: {filename}, Page {page}]"
                 context_parts.append(f"{source_ref}\n{content}")
+                cited_filenames.add(filename)
 
         if not context_parts:
             return "Error: Found relevant documents but failed to extract content for context."
 
-        context = "\n\n---\n\n".join(context_parts) # Use separator for clarity
+        context_from_docs = "\n\n---\n\n".join(context_parts)
 
-        # --- Prepare Profile Information String (if applicable) ---
-        profile_info_string = ""
-        user_name = None
+        policy_data_string = ""
+        user_name = "User" # Default fallback
         if is_personal_batch and self.user_profile:
-            print("Including user profile information in the prompt.")
+            print("Including user profile and ALL structured policy data in the prompt.")
             profile_items = []
-            user_name = self.user_profile.get('name')
+            policy_data_items = []
+
+            user_name = self.user_profile.get('name', 'User')
             if user_name:
                 profile_items.append(f"- User Name: {user_name}")
-            if self.user_profile.get('date_of_birth'):
-                profile_items.append(f"- Date of Birth: {self.user_profile.get('date_of_birth')}")
-            # Optionally add brief policy details, mindful of token limits
-            owned_policies = self.user_profile.get('policies_owned', [])
-            if owned_policies:
-                profile_items.append(f"- Policies Owned: {', '.join(owned_policies)}")
-            # Add more details carefully if needed from 'policy_details'
 
-            if profile_items:
-                 profile_info_string = "\n\nUSER PROFILE CONTEXT:\n" + "\n".join(profile_items)
+            # Inject ALL policy details from the comprehensive profile
+            for policy in self.user_profile.get("policy_details", []):
+                print(f"Injecting structured data for: {policy.get('filename')}")
+                policy_data_items.append(json.dumps(policy, indent=2))
 
+            # Add general profile info
+            profile_info_string = "\n\nUSER PROFILE:\n" + "\n".join(profile_items)
+
+            # Add the structured policy data
+            if policy_data_items:
+                policy_data_string = "\n\nSTRUCTURED USER POLICY DATA (FOR REASONING):\n" + "\n---\n".join(policy_data_items)
+
+        salutation = f"Hi {user_name},"
 
         # --- Construct the Final Prompt ---
-        # Base prompt instructions
-        prompt_instructions = f"""You are an expert assistant with STRICT EVIDENCE REQUIREMENTS.
-Answer the question based ONLY on the provided documents ('AVAILABLE DOCUMENTS' section below) and user profile ('USER PROFILE CONTEXT' section below, if provided).
+        prompt_instructions = f"""You are an expert financial advisor with STRICT EVIDENCE REQUIREMENTS.
+Your task is to answer the user's question about their insurance portfolio.
 
-{'This question is specifically about the user detailed in the USER PROFILE CONTEXT. Tailor your answer accordingly, referring to "your policy/policies".' if profile_info_string else 'Answer based generally on the documents provided.'}
+You are given two types of context:
+1.  **STRUCTURED USER POLICY DATA:** Clean JSON data for ALL of the user's policies. This is your primary source of truth for coverage details, benefit amounts, and what policies exist.
+2.  **AVAILABLE DOCUMENTS:** A small set of messy, raw text chunks from the original PDF policy files. These are *only* for finding citations. They may not be complete and may be missing policies.
 
 Your Task: Answer the following question:
 >>> {original_query} <<<
 {profile_info_string}
+{policy_data_string}
 
-AVAILABLE DOCUMENTS:
+AVAILABLE DOCUMENTS (FOR CITATION ONLY):
 --- START OF DOCUMENTS ---
-{context}
+{context_from_docs}
 --- END OF DOCUMENTS ---
 
 CRITICAL RESPONSE RULES:
-1. **Base Answer ONLY on AVAILABLE DOCUMENTS:** Do not use any prior knowledge or external information.
-2. **Cite EVERYTHING:** Every piece of information MUST end with a citation like [Source X] or [Sources X, Y], referencing the source number from the AVAILABLE DOCUMENTS section.
-3. **Handle Missing Information:** If the documents don't answer the question or part of it, explicitly state that and cite the sources checked. Example: "The provided documents do not specify the waiting period for Condition Z [no mention in Sources 1-5]."
-4. **Be Specific to User (if profile provided):** If USER PROFILE CONTEXT exists, address the user (e.g., "John, your policy...") and focus on their owned policies.
-5. **Be Comprehensive but Concise:** Include all relevant details found in the documents but avoid unnecessary jargon or repetition.
-6. **Quote Sparingly:** Prefer summarizing information with citations. Use direct quotes only if essential and keep them short.
-7. **No Assumptions:** Do not infer or assume details not explicitly stated. Explicitly state if something is not mentioned.
+1.  **Trust Structured Data First:** Base your answer on the `STRUCTURED USER POLICY DATA`. This is the complete, correct information.
+2.  **Find Citation in Documents:** After finding the answer in the structured data, you MUST try to locate supporting evidence for it in the `AVAILABLE DOCUMENTS`.
+3.  **Cite Everything:** If you find a supporting citation, end the fact with [Source X: filename.pdf, Page Y].
+4.  **Handle Missing Citations:** If you find information in the `STRUCTURED USER POLICY DATA` (e.g., 'rental_vehicle_excess: 1500') but CANNOT find a matching citation in the `AVAILABLE DOCUMENTS` (the raw text), you MUST state the fact and cite the `filename` from the structured data. Example: `...S$1,500 [Source: GREAT_TravelCare.pdf, from your policy profile]`.
+5.  **Handle Missing Information:** If the information is not in the `STRUCTURED USER POLICY DATA` or the `AVAILABLE DOCUMENTS`, state that the information is not available.
+6.  **Perform Calculations:** If the user provides numbers and the policy data provides coverage amounts, perform simple calculations to help the user.
+7.  **Address the User By Name:** You MUST start the response with the exact salutation: "{salutation}". Do not invent a different name.
+8.  **Be Comprehensive:** Check ALL policies in the `STRUCTURED USER POLICY DATA` for relevance to the user's question.
+9.  **Add Sources Section:** After your complete answer, add a horizontal rule (---)
 
 PROHIBITED:
-- Answering without citations.
-- Using information outside the AVAILABLE DOCUMENTS.
-- Making up details or features.
-- Claiming one option is "better" unless the documents provide explicit comparative evidence.
+- Answering without citations (must use [Source X] or [Source: filename.pdf, from your policy profile]).
+- Using information *only* from the messy `AVAILABLE DOCUMENTS` if it contradicts the `STRUCTURED USER POLICY DATA`.
+- Inventing a user name or a persona for yourself.
+- Starting the response with any text other than the exact salutation: "{salutation}"
 
 Generate the answer now following all rules:
 """
@@ -264,14 +329,14 @@ Generate the answer now following all rules:
                  raise ValueError("OpenAI client is not initialized.")
 
             response = self.client.chat.completions.create(
-                model="gpt-4o-mini", # Use "gpt-4o" for potentially better reasoning if needed
+                model="gpt-4o", # Keep gpt-4o for this complex reasoning task
                 messages=[
-                    {"role": "system", "content": "You are a precise assistant providing answers strictly based on given documents and user context, citing every piece of information."},
+                    {"role": "system", "content": "You are a precise, expert financial advisor. You answer questions by combining structured JSON data with citable text snippets from policy documents."},
                     {"role": "user", "content": prompt_instructions}
                 ],
-                max_tokens=1500, # Adjust based on expected answer length
-                temperature=0.05, # Very low temperature for factual, consistent answers
-                stop=None # Let the model decide when to stop
+                max_tokens=1500,
+                temperature=0.05,
+                stop=None
             )
 
             final_answer = response.choices[0].message.content.strip()
@@ -280,7 +345,6 @@ Generate the answer now following all rules:
 
         except Exception as e:
             print(f"Error during OpenAI API call: {e}")
-            # Provide a more user-friendly error message, but log the technical details
             return "Sorry, I encountered an error while generating the response. Please try again later or check the system logs."
 
     def get_performance_stats(self) -> Dict[str, Any]:
