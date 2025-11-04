@@ -202,7 +202,8 @@ class QueryProcessor:
             )
             print(f"Retrieved {len(raw_search_results)} raw results from hybrid search.")
 
-            is_personal_batch = (target_batch == "my_policies")
+            # is_personal_batch = (target_batch == "my_policies")
+            is_personal_batch = target_batch.startswith("user_")
 
             relevant_results = raw_search_results
             if is_personal_batch:
@@ -260,6 +261,7 @@ class QueryProcessor:
         context_from_docs = "\n\n---\n\n".join(context_parts)
 
         policy_data_string = ""
+        profile_info_string = ""
         user_name = "User" # Default fallback
         if is_personal_batch and self.user_profile:
             print("Including user profile and ALL structured policy data in the prompt.")

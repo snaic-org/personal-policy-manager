@@ -327,7 +327,7 @@ def query_endpoint():
 
         # 5. Process the query
         print(f"Processing query for batch: {batch_id}")
-        resp = query_processor.process_query(q)
+        resp = query_processor.process_query(q, batch_id=batch_id)
         return jsonify({"response": resp, "batch": batch_id})
         
     except Exception as e:
