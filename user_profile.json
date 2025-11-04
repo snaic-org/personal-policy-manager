@@ -173,6 +173,10 @@
         "outpatient_general": "Not covered (only specific outpatient like dialysis, cancer)",
         "dental": "Only accidental dental covered",
         "traditional_chinese_medicine": "Not covered"
+      },
+
+      "underwriting": {
+        "existing_conditions_disclosure": "history of asthma at age 10"
       }
     },
 
