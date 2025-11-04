@@ -175,16 +175,13 @@ class HybridSearchEngine:
             print(f"Error loading BM25 index: {e}")
             return False
 
-    def hybrid_search(self, query: str, top_k: int = 10,
-                     required_sources: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    def hybrid_search(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
         """
         Perform hybrid search combining FAISS and BM25 results.
 
         Args:
             query: Search query string
             top_k: Number of results to return
-            required_sources: Optional list of required source identifiers (e.g., ['singlife', 'fwd'])
-                            to ensure balanced retrieval for comparisons
         """
         if not self.faiss_index or not self.bm25_index:
             print("Indexes not loaded")
@@ -192,70 +189,19 @@ class HybridSearchEngine:
 
         try:
             # Get FAISS results (semantic search)
-            faiss_results = self._faiss_search(query, top_k * 2)  # Get more for filtering
+            faiss_results = self._faiss_search(query, top_k)
 
             # Get BM25 results (keyword search)
-            bm25_results = self._bm25_search(query, top_k * 2)  # Get more for filtering
+            bm25_results = self._bm25_search(query, top_k)
 
             # Combine and rank results
-            combined_results = self._combine_results(faiss_results, bm25_results, top_k * 2)
-
-            # If required_sources specified, ensure balanced representation
-            if required_sources:
-                combined_results = self._balance_by_sources(combined_results, required_sources, top_k)
-            else:
-                combined_results = combined_results[:top_k]
+            combined_results = self._combine_results(faiss_results, bm25_results, top_k)
 
             return combined_results
 
         except Exception as e:
             print(f"Error in hybrid search: {e}")
             return []
-
-    def _balance_by_sources(self, results: List[Dict[str, Any]],
-                           required_sources: List[str], top_k: int) -> List[Dict[str, Any]]:
-        """Ensure balanced representation from required sources."""
-
-        # Categorize results by source
-        source_results = {source: [] for source in required_sources}
-        other_results = []
-
-        for result in results:
-            filename = result.get('metadata', {}).get('filename', '').lower()
-            content = result.get('content', '').lower()
-
-            categorized = False
-            for source in required_sources:
-                if source.lower() in filename or source.lower() in content:
-                    source_results[source].append(result)
-                    categorized = True
-                    break
-
-            if not categorized:
-                other_results.append(result)
-
-        # Interleave results from each required source
-        balanced = []
-        max_per_source = max(1, top_k // len(required_sources))
-
-        # Round-robin selection from each source
-        for source in required_sources:
-            balanced.extend(source_results[source][:max_per_source])
-
-        # Fill remaining slots with highest-scoring results
-        remaining_slots = top_k - len(balanced)
-        if remaining_slots > 0:
-            # Collect remaining results from all sources
-            remaining = []
-            for source in required_sources:
-                remaining.extend(source_results[source][max_per_source:])
-            remaining.extend(other_results)
-
-            # Sort by combined score and take top remaining
-            remaining.sort(key=lambda x: x.get('combined_score', 0), reverse=True)
-            balanced.extend(remaining[:remaining_slots])
-
-        return balanced[:top_k]
 
     def _faiss_search(self, query: str, top_k: int) -> List[Dict[str, Any]]:
         """Perform FAISS semantic search."""

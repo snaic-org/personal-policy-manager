@@ -320,3 +320,6 @@ Icon?
 
 # Node modules
 node_modules/
+
+# Personal Info
+user_profile.json

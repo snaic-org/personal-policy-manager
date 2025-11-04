@@ -5,6 +5,10 @@ Main entry point for the user-facing web application.
 Handles user registration, login, document upload, and querying.
 """
 
+from dotenv import load_dotenv
+load_dotenv()
+
+import argparse
 import sys
 import os
 import json
@@ -339,10 +343,5 @@ def run_api_server(host="0.0.0.0", port=5000):
     app.run(host=host, port=port)
 
 if __name__ == "__main__":
-    # Load .env variables
-    from dotenv import load_dotenv
-    load_dotenv()
-    
-    # Remove all CLI logic, just run the server
     port = int(os.environ.get("PORT", 5000))
     run_api_server(port=port)
