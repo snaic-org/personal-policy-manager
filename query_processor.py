@@ -139,35 +139,37 @@ class QueryProcessor:
 
     def _expand_query(self, query: str) -> str:
         """
-        Expands the user query using LLM to generate insurance-related terms.
+        Expands the user query using intelligent LLM rewriting for insurance domain.
         """
         try:
             expansion_prompt = f"""
-          You are an insurance expert. A user is asking about insurance coverage.
-          Generate 8-10 relevant insurance and policy terms that could help find information about their question.
+            You are an insurance domain expert. A user is asking: "{query}"
 
-          Focus on:
-          - Technical insurance terms
-          - Policy benefit names  
-          - Related coverage types
-          - Alternative wording for the same concepts
+            Generate a comprehensive search query that includes:
+            1. The original terms from the user's question
+            2. Official insurance terminology that means the same thing
+            3. Common abbreviations and synonyms used in insurance policies
+            4. Related concepts that might appear in policy documents
 
-          User Question: "{query}"
+            For example:
+            - "collision damage waiver" should include "rental vehicle excess", "CDW", "car rental insurance"
+            - "medical coverage" should include "medical expenses", "healthcare benefits", "treatment costs"
 
-          Output only the relevant terms separated by spaces (no explanations):
-          """
+            Focus on terms that would actually appear in insurance policy documents.
+            Output only the search terms separated by spaces (no explanations):
+            """
 
             response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4o",
                 messages=[{"role": "user", "content": expansion_prompt}],
-                max_tokens=100,
+                max_tokens=150,  # Increased for more comprehensive expansion
                 temperature=0.1,
             )
 
             keywords = response.choices[0].message.content.strip()
             expanded_query = f"{query} {keywords}"
 
-            print(f"Query expanded (LLM) to: {expanded_query}")
+            print(f"Query intelligently expanded to: {expanded_query}")
             return expanded_query
 
         except Exception as e:
@@ -218,140 +220,6 @@ class QueryProcessor:
                 f"Retained {len(unique_results)} unique relevant chunks after filtering/deduplication."
             )
 
-            # print("\n=== DEBUG: SEARCH RESULTS ===")
-            # for i, result in enumerate(unique_results[:20]):  # Show first 20 results
-            #     content_preview = (
-            #         result.get("content", "")[:200] + "..."
-            #         if len(result.get("content", "")) > 200
-            #         else result.get("content", "")
-            #     )
-            #     metadata = result.get("metadata", {})
-            #     print(f"Result {i + 1}:")
-            #     print(f"  File: {metadata.get('filename', 'Unknown')}")
-            #     print(f"  Page: {metadata.get('page_number', 'Unknown')}")
-            #     print(f"  Content: {content_preview}")
-            #     print(f"  Score: {result.get('combined_score', 'N/A')}")
-            #     print("---")
-            # print("=== END DEBUG ===\n")
-
-            # DEBUG: Check what TravelCare chunks exist
-            print("\n=== TRAVELCARE CHUNKS DEBUG ===")
-            travelcare_chunks = [
-                r
-                for r in unique_results
-                if "TravelCare" in r.get("metadata", {}).get("filename", "")
-            ]
-            print(f"Found {len(travelcare_chunks)} TravelCare chunks in results")
-
-            if len(travelcare_chunks) == 0:
-                print("PROBLEM: No TravelCare chunks found in search results!")
-                # Let's check if TravelCare chunks exist at all in the index
-                all_results_raw = self.search_engine.hybrid_search(
-                    "travel insurance rental", top_k=100
-                )
-                travelcare_raw = [
-                    r
-                    for r in all_results_raw
-                    if "TravelCare" in r.get("metadata", {}).get("filename", "")
-                ]
-                print(
-                    f"Found {len(travelcare_raw)} TravelCare chunks when searching 'travel insurance rental'"
-                )
-            print("=== END TRAVELCARE DEBUG ===\n")
-
-            print("\n=== TRAVELCARE CONTENT DEBUG ===")
-            travel_results = self.search_engine.hybrid_search(
-                "travel insurance", top_k=20
-            )
-            travelcare_found = False
-            for i, result in enumerate(travel_results[:10]):
-                metadata = result.get("metadata", {})
-                filename = metadata.get("filename", "")
-                if "TravelCare" in filename:
-                    print(f"TravelCare Chunk {i}:")
-                    print(f"File: {filename}")
-                    print(f"Page: {metadata.get('page_number', 'Unknown')}")
-                    print(f"Content: {result.get('content', '')[:300]}...")
-                    print("---")
-                    travelcare_found = True
-
-            if not travelcare_found:
-                print(
-                    "🚨 NO TravelCare chunks found even with 'travel insurance' search!"
-                )
-                print("Checking if ANY TravelCare chunks exist in the index...")
-
-                # Check all possible searches
-                for search_term in [
-                    "TravelCare",
-                    "GREAT",
-                    "rental",
-                    "vehicle",
-                    "excess",
-                ]:
-                    test_results = self.search_engine.hybrid_search(
-                        search_term, top_k=50
-                    )
-                    travelcare_count = sum(
-                        1
-                        for r in test_results
-                        if "TravelCare" in r.get("metadata", {}).get("filename", "")
-                    )
-                    print(
-                        f"  Search '{search_term}': {travelcare_count} TravelCare chunks"
-                    )
-
-            print("=== END CONTENT DEBUG ===\n")
-
-            # DEBUG: Output all search results to file for inspection
-            print("Writing all search results to debug_search_results.txt...")
-            debug_filename = f"debug_search_results_{int(time.time())}.txt"
-            with open(debug_filename, "w", encoding="utf-8") as f:
-                f.write(f"DEBUG: Search Results for Query: {query}\n")
-                f.write(f"Expanded Query: {expanded_query}\n")
-                f.write("=" * 80 + "\n\n")
-
-                # Write the top 50 results
-                for i, result in enumerate(unique_results[:50], 1):
-                    metadata = result.get("metadata", {})
-                    content = result.get("content", "")
-
-                    f.write(f"RESULT #{i}\n")
-                    f.write(f"File: {metadata.get('filename', 'Unknown')}\n")
-                    f.write(f"Page: {metadata.get('page_number', 'Unknown')}\n")
-                    f.write(f"Score: {result.get('combined_score', 'N/A')}\n")
-                    f.write(f"Content Length: {len(content)} chars\n")
-                    f.write("-" * 40 + "\n")
-                    f.write(f"CONTENT:\n{content}\n")
-                    f.write("=" * 80 + "\n\n")
-
-                # Also write a separate section for TravelCare chunks specifically
-                f.write("\n\nTRAVELCARE CHUNKS SPECIFICALLY:\n")
-                f.write("=" * 80 + "\n")
-
-                travelcare_debug_results = self.search_engine.hybrid_search(
-                    "GREAT TravelCare", top_k=100
-                )
-                travelcare_chunks = [
-                    r
-                    for r in travelcare_debug_results
-                    if "TravelCare" in r.get("metadata", {}).get("filename", "")
-                ]
-
-                if travelcare_chunks:
-                    for i, chunk in enumerate(travelcare_chunks[:20], 1):
-                        metadata = chunk.get("metadata", {})
-                        content = chunk.get("content", "")
-                        f.write(f"TRAVELCARE CHUNK #{i}\n")
-                        f.write(f"File: {metadata.get('filename', 'Unknown')}\n")
-                        f.write(f"Page: {metadata.get('page_number', 'Unknown')}\n")
-                        f.write(f"Content: {content}\n")
-                        f.write("-" * 40 + "\n")
-                else:
-                    f.write("NO TRAVELCARE CHUNKS FOUND!\n")
-
-            print(f"Debug file written: {debug_filename}")
-
             if not unique_results:
                 if is_personal_batch and self.user_profile:
                     return f"Based on your profile, I couldn't find relevant information in your specific policy documents ('{', '.join(self.user_profile.get('policies_owned', []))}') for the question: '{query}'."
@@ -381,7 +249,7 @@ class QueryProcessor:
             return "I couldn't find any relevant information in the documents to answer your question."
 
         context_parts = []
-        max_chunks_for_context = 15
+        max_chunks_for_context = 30
         cited_filenames = set()  # keeps track of which documents we found
 
         print(
@@ -402,19 +270,30 @@ class QueryProcessor:
 
         context_from_docs = "\n\n---\n\n".join(context_parts)
 
-        # Simple profile handling for basic profile
+        # Enhanced profile handling with policy tiers
         if is_personal_batch and self.user_profile:
             user_name = self.user_profile.get("name", "User")
+            policy_tiers = self.user_profile.get("policy_tiers", {})
+
             profile_info = f"\n\nUSER PROFILE:\n- User Name: {user_name}"
+            if policy_tiers:
+                profile_info += "\n- Policy Tiers:"
+                for policy, tier in policy_tiers.items():
+                    profile_info += f"\n  - {policy}: {tier} plan"
         else:
             user_name = "User"
             profile_info = ""
 
         salutation = f"Hi {user_name.split()[0] if user_name != 'User' else 'Hi'},"
 
-        # Clean, simple prompt
+        # Enhanced prompt with insurance terminology awareness and tier personalization
         prompt_instructions = f"""You are an expert financial advisor specializing in insurance policy analysis.
     Your task is to answer the user's question about their insurance coverage.
+
+    IMPORTANT INSURANCE TERMINOLOGY EQUIVALENCE:
+    - "Rental vehicle excess" = "Collision damage waiver (CDW)" = "Car rental insurance"
+    - "Loss damage waiver (LDW)" = "Collision damage waiver (CDW)"
+    - When a user asks about CDW and you find "rental vehicle excess" coverage, treat them as the same thing
 
     User Question: {original_query}
     {profile_info}
@@ -426,10 +305,14 @@ class QueryProcessor:
 
     CRITICAL RESPONSE RULES:
     1. **Base your answer on the document chunks above**
-    2. **Cite every fact with [Source X: filename.pdf, Page Y]**
-    3. **If you find relevant coverage information, explain it clearly**
-    4. **If information is missing, state that clearly**
-    5. **Start your response with: "{salutation}"**
+    2. **Use the user's specific policy tier** - if the profile shows they have a specific plan tier (e.g., "Prestige", "Platinum"), focus on that tier's benefits rather than listing all options
+    3. **Understand insurance terminology equivalence** - connect related terms confidently
+    4. **If you find relevant coverage information, explain it clearly with specific dollar amounts for their tier (e.g., "up to S$2,500")**
+    5. **Cite every fact with [Source X: filename.pdf, Page Y]**
+    6. **Be specific about coverage amounts, plan types, and conditions**
+    7. **Start your response with: "{salutation}"**
+    8. **Provide actionable advice based on the coverage found**
+    9. **When multiple plan tiers are shown, focus on the user's specific tier from their profile**
 
     Generate a helpful response now:
     """
@@ -445,7 +328,7 @@ class QueryProcessor:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an expert financial advisor. Answer insurance questions using only the provided document chunks, with proper citations.",
+                        "content": "You are an expert financial advisor. Answer insurance questions using the provided document chunks, with proper citations. Always include specific coverage amounts when available in the documents. Understand that insurance terminology can have equivalent meanings (e.g., 'rental vehicle excess' = 'collision damage waiver'). Always personalize responses based on the user's specific policy tiers when available.",
                     },
                     {"role": "user", "content": prompt_instructions},
                 ],
