@@ -10,11 +10,11 @@
   "policies_owned": [
     "Manulife_Policy_Illustration_REDACTED.pdf",
     "GREAT_SupremeHealth_Benefits.pdf",
-    "GREAT_TravelCare.pdf"
+    "SINGLIFE_TRAVEL_POLICY.pdf"
   ],
 
   "policy_tiers": {
     "GREAT_SupremeHealth_Benefits.pdf": "P PLUS",
-    "GREAT_TravelCare.pdf": "Platinum"
+    "SINGLIFE_TRAVEL_POLICY.pdf": "Prestige"
   }
 }

@@ -11,13 +11,16 @@ from typing import List, Dict, Any, Optional, Tuple
 import json
 from pathlib import Path
 
+
 class SearchIndexBuilder:
     """Builds FAISS and BM25 search indexes."""
 
     def __init__(self):
         self.embedding_generator = None
 
-    def build_faiss_index(self, chunks: List[str], metadata: List[Dict], output_dir: str) -> bool:
+    def build_faiss_index(
+        self, chunks: List[str], metadata: List[Dict], output_dir: str
+    ) -> bool:
         """Build FAISS index from text chunks."""
         try:
             import faiss
@@ -34,7 +37,7 @@ class SearchIndexBuilder:
                 return False
 
             # Convert to numpy array
-            embedding_matrix = np.array(embeddings).astype('float32')
+            embedding_matrix = np.array(embeddings).astype("float32")
 
             # Create FAISS index
             dimension = embedding_matrix.shape[1]
@@ -51,12 +54,15 @@ class SearchIndexBuilder:
             faiss.write_index(index, str(Path(output_dir) / "index.faiss"))
 
             # Save chunks and metadata
-            with open(Path(output_dir) / "index.pkl", 'wb') as f:
-                pickle.dump({
-                    'chunks': chunks,
-                    'embeddings': embeddings,
-                    'metadata': metadata,
-                }, f)
+            with open(Path(output_dir) / "index.pkl", "wb") as f:
+                pickle.dump(
+                    {
+                        "chunks": chunks,
+                        "embeddings": embeddings,
+                        "metadata": metadata,
+                    },
+                    f,
+                )
 
             print(f"FAISS index saved to {output_dir}")
             return True
@@ -68,7 +74,9 @@ class SearchIndexBuilder:
             print(f"Error building FAISS index: {e}")
             return False
 
-    def build_bm25_index(self, chunks: List[str], metadata: List[Dict], output_file: str) -> bool:
+    def build_bm25_index(
+        self, chunks: List[str], metadata: List[Dict], output_file: str
+    ) -> bool:
         """Build BM25 index from text chunks."""
         try:
             from rank_bm25 import BM25Okapi
@@ -80,7 +88,7 @@ class SearchIndexBuilder:
             bm25 = BM25Okapi(tokenized_chunks)
 
             # Save BM25 index with chunks and metadata
-            with open(output_file, 'wb') as f:
+            with open(output_file, "wb") as f:
                 pickle.dump((bm25, chunks, metadata), f)
 
             print(f"BM25 index saved to {output_file}")
@@ -142,10 +150,10 @@ class HybridSearchEngine:
             self.faiss_index = faiss.read_index(str(index_file))
 
             # Load chunks
-            with open(chunks_file, 'rb') as f:
+            with open(chunks_file, "rb") as f:
                 data = pickle.load(f)
-                self.faiss_chunks = data['chunks']
-                self.faiss_metadata = data.get('metadata', [])
+                self.faiss_chunks = data["chunks"]
+                self.faiss_metadata = data.get("metadata", [])
 
             # Initialize embedding generator for query embeddings
             if not self.embedding_generator:
@@ -165,7 +173,7 @@ class HybridSearchEngine:
                 print(f"BM25 index not found: {bm25_path}")
                 return False
 
-            with open(bm25_path, 'rb') as f:
+            with open(bm25_path, "rb") as f:
                 self.bm25_index, self.bm25_chunks, self.bm25_metadata = pickle.load(f)
 
             print(f"BM25 index loaded: {len(self.bm25_chunks)} chunks")
@@ -214,7 +222,8 @@ class HybridSearchEngine:
 
             # Normalize query embedding
             import faiss
-            query_embedding = query_embedding.reshape(1, -1).astype('float32')
+
+            query_embedding = query_embedding.reshape(1, -1).astype("float32")
             faiss.normalize_L2(query_embedding)
 
             # Search
@@ -223,13 +232,19 @@ class HybridSearchEngine:
             results = []
             for i, (score, idx) in enumerate(zip(scores[0], indices[0])):
                 if idx < len(self.faiss_chunks):
-                    results.append({
-                        'content': self.faiss_chunks[idx],
-                        'score': float(score),
-                        'source': 'faiss',
-                        'rank': i,
-                        'metadata': self.faiss_metadata[idx] if idx < len(self.faiss_metadata) else {}
-                    })
+                    results.append(
+                        {
+                            "content": self.faiss_chunks[idx],
+                            "score": float(score),
+                            "source": "faiss",
+                            "rank": i,
+                            "metadata": (
+                                self.faiss_metadata[idx]
+                                if idx < len(self.faiss_metadata)
+                                else {}
+                            ),
+                        }
+                    )
 
             return results
 
@@ -252,13 +267,19 @@ class HybridSearchEngine:
             results = []
             for i, idx in enumerate(top_indices):
                 if scores[idx] > 0:  # Only include positive scores
-                    results.append({
-                        'content': self.bm25_chunks[idx],
-                        'score': float(scores[idx]),
-                        'source': 'bm25',
-                        'rank': i,
-                        'metadata': self.bm25_metadata[idx] if idx < len(self.bm25_metadata) else {}
-                    })
+                    results.append(
+                        {
+                            "content": self.bm25_chunks[idx],
+                            "score": float(scores[idx]),
+                            "source": "bm25",
+                            "rank": i,
+                            "metadata": (
+                                self.bm25_metadata[idx]
+                                if idx < len(self.bm25_metadata)
+                                else {}
+                            ),
+                        }
+                    )
 
             return results
 
@@ -266,23 +287,28 @@ class HybridSearchEngine:
             print(f"Error in BM25 search: {e}")
             return []
 
-    def _combine_results(self, faiss_results: List[Dict], bm25_results: List[Dict],
-                        top_k: int) -> List[Dict[str, Any]]:
+    def _combine_results(
+        self, faiss_results: List[Dict], bm25_results: List[Dict], top_k: int
+    ) -> List[Dict[str, Any]]:
         """Combine FAISS and BM25 results with weighted scoring."""
         # Weight factors (can be tuned)
-        faiss_weight = 0.6
-        bm25_weight = 0.4
+        faiss_weight = 0.3
+        bm25_weight = 0.7
 
         # Normalize scores
         if faiss_results:
-            max_faiss_score = max(r['score'] for r in faiss_results)
+            max_faiss_score = max(r["score"] for r in faiss_results)
             for result in faiss_results:
-                result['normalized_score'] = result['score'] / max_faiss_score if max_faiss_score > 0 else 0
+                result["normalized_score"] = (
+                    result["score"] / max_faiss_score if max_faiss_score > 0 else 0
+                )
 
         if bm25_results:
-            max_bm25_score = max(r['score'] for r in bm25_results)
+            max_bm25_score = max(r["score"] for r in bm25_results)
             for result in bm25_results:
-                result['normalized_score'] = result['score'] / max_bm25_score if max_bm25_score > 0 else 0
+                result["normalized_score"] = (
+                    result["score"] / max_bm25_score if max_bm25_score > 0 else 0
+                )
 
         # Combine unique results
         seen_content = set()
@@ -290,35 +316,37 @@ class HybridSearchEngine:
 
         # Add FAISS results
         for result in faiss_results:
-            content = result['content']
+            content = result["content"]
             if content not in seen_content:
-                result['combined_score'] = result['normalized_score'] * faiss_weight
+                result["combined_score"] = result["normalized_score"] * faiss_weight
                 combined.append(result)
                 seen_content.add(content)
 
         # Add BM25 results (boost if already exists)
         for result in bm25_results:
-            content = result['content']
+            content = result["content"]
             if content in seen_content:
                 # Boost existing result
                 for existing in combined:
-                    if existing['content'] == content:
-                        existing['combined_score'] += result['normalized_score'] * bm25_weight
+                    if existing["content"] == content:
+                        existing["combined_score"] += (
+                            result["normalized_score"] * bm25_weight
+                        )
                         break
             else:
-                result['combined_score'] = result['normalized_score'] * bm25_weight
+                result["combined_score"] = result["normalized_score"] * bm25_weight
                 combined.append(result)
                 seen_content.add(content)
 
         # Sort by combined score and return top_k
-        combined.sort(key=lambda x: x['combined_score'], reverse=True)
+        combined.sort(key=lambda x: x["combined_score"], reverse=True)
 
         return combined[:top_k]
 
     def get_stats(self) -> Dict[str, Any]:
         """Get search engine statistics."""
         return {
-            'faiss_chunks': len(self.faiss_chunks),
-            'bm25_chunks': len(self.bm25_chunks),
-            'indexes_loaded': bool(self.faiss_index and self.bm25_index)
+            "faiss_chunks": len(self.faiss_chunks),
+            "bm25_chunks": len(self.bm25_chunks),
+            "indexes_loaded": bool(self.faiss_index and self.bm25_index),
         }
