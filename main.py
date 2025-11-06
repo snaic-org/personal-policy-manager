@@ -20,7 +20,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, JWTManager
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-from datetime import timedelta
+from datetime import timedelta, datetime, UTC
 
 # Add current directory to path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -67,6 +67,17 @@ class User(db.Model):
     def get_batch_id(self):
         """Returns the user-specific batch_id."""
         return f"user_{self.id}"
+
+# --- Message Model ---
+
+class Message(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    role = db.Column(db.String(10), nullable=False) # 'user' or 'bot'
+    content = db.Column(db.Text, nullable=False)
+    timestamp = db.Column(db.DateTime, default=datetime.now(UTC))
+
+    user = db.relationship('User', backref=db.backref('messages', lazy=True))
 
 # --- Authentication Endpoints ---
 
@@ -205,7 +216,6 @@ def upload_policies():
         print(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
     
-
 @app.route('/delete_files', methods=['POST'])
 @jwt_required()
 def delete_files():
@@ -282,7 +292,6 @@ def delete_files():
         print(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
-
 @app.route('/list_files', methods=['GET'])
 @jwt_required()
 def list_files():
@@ -307,6 +316,23 @@ def list_files():
 def health():
     return jsonify({"status": "ok"})
 
+@app.route("/history", methods=["GET"])
+@jwt_required()
+def get_history():
+    """Gets the current user's chat history."""
+    try:
+        user_id_str = get_jwt_identity()
+        user_id_int = int(user_id_str)
+        
+        messages = Message.query.filter_by(user_id=user_id_int).order_by(Message.timestamp.asc()).all()
+        
+        history = [{"role": msg.role, "content": msg.content} for msg in messages]
+        return jsonify(history), 200
+        
+    except Exception as e:
+        print(f"Error getting history: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/query", methods=["POST"])
 @jwt_required()
 def query_endpoint():
@@ -315,22 +341,28 @@ def query_endpoint():
         user_id_str = get_jwt_identity()
         user_id_int = int(user_id_str)
 
-        user = db.session.get(User, user_id_int) # Use the integer ID here
+        user = db.session.get(User, user_id_int)
         if not user:
             return jsonify({"error": "User not found"}), 404
         
         # 2. The user's batch_id is their unique ID
         batch_id = user.get_batch_id()
-        
         data = request.get_json(force=True, silent=True) or {}
         q = data.get("query") or data.get("question")
-
         if not q:
             return jsonify({"error": "Missing 'query' in request body"}), 400
+        
+        # Save the user's question to the database
+        user_message = Message(user_id=user_id_int, role="user", content=q)
+        db.session.add(user_message)
 
         # 3. Check if the user's batch exists (have they uploaded docs?)
         if not batch_manager.get_batch_info(batch_id):
-            return jsonify({"response": "I can't answer that yet. Please upload your policy documents first using the 'Upload' button.", "batch": batch_id}), 200
+            response_text = "I can't answer that yet. Please upload your policy documents first using the 'Upload' button."
+            bot_message = Message(user_id=user_id_int, role="bot", content=response_text)
+            db.session.add(bot_message)
+            db.session.commit() # Commit both messages
+            return jsonify({"response": response_text, "batch": batch_id}), 200
 
         # 4. Switch the chatbot to use ONLY this user's batch
         if not batch_manager.switch_batch(batch_id):
@@ -339,11 +371,18 @@ def query_endpoint():
         # 5. Process the query
         print(f"Processing query for batch: {batch_id}")
         resp = query_processor.process_query(q, batch_id=batch_id)
+    
+        # Save the bot's response to the database
+        bot_message = Message(user_id=user_id_int, role="bot", content=resp)
+        db.session.add(bot_message)
+        db.session.commit() # Commit both user and bot messages
+        
         return jsonify({"response": resp, "batch": batch_id})
         
     except Exception as e:
         print(f"Error processing query: {str(e)}")
         print(traceback.format_exc())
+        db.session.rollback() # Rollback if any error occurs
         return jsonify({"error": str(e)}), 500
 
 # --- Main Server ---

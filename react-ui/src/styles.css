@@ -375,10 +375,10 @@ html, body, #root {
   padding-top: 40px;
 }
 
-/* Message Formatter */
+/* --- Message Formatter --- */
 .formatted-message {
-  line-height: 1.5;
-  white-space: pre-wrap;
+  line-height: 1.6;
+  white-space: normal; /* Override pre-wrap */
 }
 .message-section {
   margin-bottom: 16px;
@@ -389,14 +389,30 @@ html, body, #root {
   font-size: 1.1em;
 }
 .section-content {
-  margin-left: 16px;
+  margin-left: 0; /* We don't need the indent anymore */
 }
+/* Remove margin from paragraphs that are part of formatted content */
 .section-content p {
-  margin: 0 0 8px;
+  margin: 0 0 10px;
 }
-.section-content li {
-  margin-bottom: 4px;
-  list-style-type: disc;
+/* Style for the new list */
+.message-list {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+.message-list li {
+  margin-bottom: 5px;
+}
+
+/* Style for the '---' divider */
+.message-divider {
+  border: none;
+  border-top: 1px solid #ddd;
+  margin: 16px 0;
+}
+.sources-section .message-list {
+  font-size: 0.9em;
+  color: #555;
 }
 
 /* --- Auth Page --- */

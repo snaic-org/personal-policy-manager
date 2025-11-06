@@ -45,6 +45,8 @@ function getAuthHeader() {
   return { 'Authorization': `Bearer ${token}` };
 }
 
+// --- User Info Function ---
+
 export async function getUserInfo() {
   const res = await fetch(`${BASE}/me`, {
     method: 'GET',
@@ -59,6 +61,24 @@ export async function getUserInfo() {
   }
   
   return res.json(); // returns { id: 1, username: 'testuser' }
+}
+
+// --- Chat History Function ---
+
+export async function getHistory() {
+  const res = await fetch(`${BASE}/history`, {
+    method: 'GET',
+    headers: {
+      ...getAuthHeader()
+    }
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  
+  return res.json(); // returns [{ role: 'user', content: '...' }, ...]
 }
 
 // --- Chatbot Functions ---
@@ -108,6 +128,7 @@ export async function uploadPolicies(files) {
 }
 
 // --- Get uploaded files Function ---
+
 export async function getUserFiles() {
   const res = await fetch(`${BASE}/list_files`, {
     method: 'GET',
@@ -125,6 +146,7 @@ export async function getUserFiles() {
 }
 
 // --- Delete file Function ---
+
 export async function deletePolicies(filenames) {
   const res = await fetch(`${BASE}/delete_files`, {
     method: 'POST',

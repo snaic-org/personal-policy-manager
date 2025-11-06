@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { sendQuery } from '../services/api';
+import { sendQuery, getHistory } from '../services/api';
 import MessageFormatter from './MessageFormatter';
 
 export default function Chat({ onUploadSuccess }) {
@@ -10,8 +10,25 @@ export default function Chat({ onUploadSuccess }) {
   const textareaRef = useRef(null); // For auto-resize
   const [refresh, setRefresh] = useState(false); // Already exists, but wasn't used
 
-  const addMessage = (role, text) => {
-     setHistory(prev => [...prev, { role, text }]);
+  useEffect(() => {
+    // Load chat history when component mounts
+    setLoading(true);
+    getHistory()
+      .then(data => {
+        setHistory(data); // Set the history from the database
+      })
+      .catch(err => {
+        console.error("Failed to load history", err);
+        // Add a local-only error message to the chat
+        addMessage('bot', `Error loading chat history: ${err.message}`);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, []); // Empty dependency array means this runs only once on mount
+
+  const addMessage = (role, content) => {
+     setHistory(prev => [...prev, { role, content }]);
   };
 
   // This function gets called by the Upload component via App.jsx
@@ -44,15 +61,24 @@ export default function Chat({ onUploadSuccess }) {
   const handleSend = async () => {
     if (!query.trim()) return;
     setLoading(true);
-    addMessage('user', query);
+    
+    // Optimistically add user message to UI
+    addMessage('user', query); 
+    const currentQuery = query; // Save query in case user types more
     setQuery('');
-    resetTextareaHeight(); // Reset textarea height
+    resetTextareaHeight();
+
     try {
-      const res = await sendQuery(query);
-      const text = res?.response ?? res?.error ?? 'No response';
-      addMessage('bot', text);
+      // The backend will now save both the user message and bot response
+      const res = await sendQuery(currentQuery); 
+      const responseText = res?.response ?? res?.error ?? 'No response';
+      
+      // Optimistically add bot response to UI
+      addMessage('bot', responseText);
     } catch (e) {
       addMessage('bot', `Error: ${e.message}`);
+      // If server failed, we should remove the user's optimistic message
+      // (For simplicity, we'll leave it, but a real app might remove it)
     } finally {
       setLoading(false);
     }
@@ -78,14 +104,19 @@ export default function Chat({ onUploadSuccess }) {
     <main className="chat-main">
       {/* This div handles the scrolling messages */}
       <div className="chat-messages">
-        {history.length === 0 && <div className="empty-state">
+        {history.length === 0 && !loading && (
+          <div className="empty-state">
             Welcome! Ask a question, or upload your policy documents using the sidebar.
-        </div>}
+          </div>
+        )}
+        {loading && history.length === 0 && (
+          <div className="empty-state">Loading history...</div>
+        )}
         {history.map((m, i) => (
           <div key={i} className={`message ${m.role}`}>
             <div className="message-header">{m.role === 'user' ? 'You' : 'Bot'}</div>
             <div className="message-content">
-              {m.role === 'bot' ? <MessageFormatter text={m.text} /> : m.text}
+              {m.role === 'bot' ? <MessageFormatter content={m.content} /> : m.content}
             </div>
           </div>
         ))}
