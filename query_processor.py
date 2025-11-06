@@ -7,19 +7,19 @@ Loads user profile for personalized responses within specific batches (e.g., 'my
 * to provide facts and uses the document chunks only for citation.
 """
 
-import os
 import json
+import os
 import time
-from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
+from typing import List, Dict, Any, Optional
 
 from openai import OpenAI
 
-from utils.search import HybridSearchEngine
 from batch_manager import BatchManager
+from utils.search import HybridSearchEngine
+
 
 class QueryProcessor:
-
     # Static Keyword Dictionary for high-priority, known semantic gaps. Not sure if we want to keep.
     STATIC_KEYWORD_MAP = {
         "collision damage waiver": "rental vehicle excess",
@@ -27,6 +27,11 @@ class QueryProcessor:
         "rental car insurance": "rental vehicle excess",
         "accident in singapore": "medical expenses while in Singapore",
         "motorcycle accident in singapore": "medical expenses while in Singapore",
+        "collision damage waiver": "rental vehicle excess rental car insurance",
+        "cdw": "rental vehicle excess rental car insurance",
+        "rental car insurance": "rental vehicle excess collision damage waiver",
+        "car rental excess": "rental vehicle excess",
+        "rental vehicle": "rental vehicle excess",
     }
 
     def __init__(self, batch_manager: BatchManager):
@@ -34,14 +39,14 @@ class QueryProcessor:
         self.search_engine = None
         self.current_batch_id = None
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        self.user_profile = self._load_user_profile() # Load profile on initialization
+        self.user_profile = self._load_user_profile()  # Load profile on initialization
 
     def _load_user_profile(self) -> Optional[Dict[str, Any]]:
         """Loads the user profile from user_profile.json in the project root."""
-        profile_path = Path("user_profile.json")
+        profile_path = Path("user_profile_basic.json")
         if profile_path.exists():
             try:
-                with open(profile_path, 'r') as f:
+                with open(profile_path, "r") as f:
                     profile = json.load(f)
                     print("User profile loaded successfully.")
                     return profile
@@ -53,7 +58,9 @@ class QueryProcessor:
                 return None
         else:
             # it's okay if the profile doesn't exist, just means no personalization
-            print("Info: user_profile.json not found. Proceeding without personalization.")
+            print(
+                "Info: user_profile.json not found. Proceeding without personalization."
+            )
             return None
 
     def _ensure_batch_loaded(self, batch_id: str) -> bool:
@@ -72,8 +79,7 @@ class QueryProcessor:
             # Create a new search engine instance for the specified batch
             self.search_engine = HybridSearchEngine()
             success = self.search_engine.load_indexes(
-                faiss_path=paths["faiss_index"],
-                bm25_path=paths["bm25_index"]
+                faiss_path=paths["faiss_index"], bm25_path=paths["bm25_index"]
             )
 
             if success:
@@ -82,7 +88,7 @@ class QueryProcessor:
                 return True
             else:
                 print(f"Error: Failed to load indexes for batch '{batch_id}'.")
-                self.search_engine = None # Ensure it's None if loading failed
+                self.search_engine = None  # Ensure it's None if loading failed
                 self.current_batch_id = None
                 return False
 
@@ -97,7 +103,7 @@ class QueryProcessor:
         unique_results = []
         seen_content = set()
         for result in results:
-            content = result.get('content', '')
+            content = result.get("content", "")
             # Check for non-empty content before adding
             if content and content not in seen_content:
                 unique_results.append(result)
@@ -113,70 +119,60 @@ class QueryProcessor:
 
         owned_policies = set(self.user_profile["policies_owned"])
         if not owned_policies:
-            print("Warning: 'policies_owned' list is empty in profile. Returning all results.")
+            print(
+                "Warning: 'policies_owned' list is empty in profile. Returning all results."
+            )
             return results
 
         filtered_results = []
         for result in results:
             # Ensure metadata and filename exist before checking
-            metadata = result.get('metadata', {})
-            filename = metadata.get('filename')
+            metadata = result.get("metadata", {})
+            filename = metadata.get("filename")
             if filename and filename in owned_policies:
                 filtered_results.append(result)
 
-        print(f"Filtered results to {len(filtered_results)} chunks based on {len(owned_policies)} owned policies.")
+        print(
+            f"Filtered results to {len(filtered_results)} chunks based on {len(owned_policies)} owned policies."
+        )
         return filtered_results
 
     def _expand_query(self, query: str) -> str:
         """
-        Expands the user query using a hybrid approach:
-        1. Check a static map for known, high-value synonyms.
-        2. If no static match, fall back to an LLM for dynamic expansion.
+        Expands the user query using LLM to generate insurance-related terms.
         """
-
-        original_query_lower = query.lower()
-        static_keywords_to_add = set()
-
-        for key, value in self.STATIC_KEYWORD_MAP.items():
-            if key in original_query_lower:
-                static_keywords_to_add.add(value)
-
-        if static_keywords_to_add:
-            expanded_query = f"{query} {' '.join(static_keywords_to_add)}"
-            print(f"Query expanded (STATIC) to: {expanded_query}")
-            return expanded_query
-
-        print("No static keywords found, using dynamic LLM expansion...")
         try:
             expansion_prompt = f"""
-            You are an insurance policy expert. A user is asking a question.
-            Your task is to list 5 to 7 technical synonyms or related insurance policy terms
-            for the concepts in the user's query to improve search.
-            
-            Focus on *policy benefit language*, not general chatter.
-            Do not answer the question. Only output a list of 5-7 related keywords, separated by spaces.
-            
-            User Query: "{query}"
-            
-            Related Keywords:
-            """
+          You are an insurance expert. A user is asking about insurance coverage.
+          Generate 8-10 relevant insurance and policy terms that could help find information about their question.
+
+          Focus on:
+          - Technical insurance terms
+          - Policy benefit names  
+          - Related coverage types
+          - Alternative wording for the same concepts
+
+          User Question: "{query}"
+
+          Output only the relevant terms separated by spaces (no explanations):
+          """
 
             response = self.client.chat.completions.create(
-                model="gpt-4o-mini", # Keep mini here, it's cheap and fast for this task
+                model="gpt-4o-mini",
                 messages=[{"role": "user", "content": expansion_prompt}],
-                max_tokens=50,
+                max_tokens=100,
                 temperature=0.1,
             )
 
-            keywords = response.choices[0].message.content.strip().replace(",", " ").replace("\n", " ")
+            keywords = response.choices[0].message.content.strip()
             expanded_query = f"{query} {keywords}"
 
-            print(f"Query expanded (DYNAMIC) to: {expanded_query}")
+            print(f"Query expanded (LLM) to: {expanded_query}")
             return expanded_query
 
         except Exception as e:
             print(f"Error during query expansion: {e}")
-            return query # Fallback to original query on error
+            return query  # Fallback to original query
 
     def process_query(self, query: str, batch_id: str = None) -> str:
         """Process a query and return the response."""
@@ -197,10 +193,11 @@ class QueryProcessor:
             expanded_query = self._expand_query(query)
 
             raw_search_results = self.search_engine.hybrid_search(
-                query=expanded_query, # Use the expanded query
-                top_k=50
+                query=expanded_query, top_k=50  # Use the expanded query
             )
-            print(f"Retrieved {len(raw_search_results)} raw results from hybrid search.")
+            print(
+                f"Retrieved {len(raw_search_results)} raw results from hybrid search."
+            )
 
             # is_personal_batch = (target_batch == "my_policies")
             is_personal_batch = target_batch.startswith("user_")
@@ -208,16 +205,156 @@ class QueryProcessor:
             relevant_results = raw_search_results
             if is_personal_batch:
                 if self.user_profile:
-                    relevant_results = self._filter_results_by_profile(raw_search_results)
+                    relevant_results = self._filter_results_by_profile(
+                        raw_search_results
+                    )
                 else:
-                    print("Warning: Operating in personal batch mode but no user profile loaded.")
+                    print(
+                        "Warning: Operating in personal batch mode but no user profile loaded."
+                    )
 
             unique_results = self._deduplicate_results(relevant_results)
-            print(f"Retained {len(unique_results)} unique relevant chunks after filtering/deduplication.")
+            print(
+                f"Retained {len(unique_results)} unique relevant chunks after filtering/deduplication."
+            )
+
+            # print("\n=== DEBUG: SEARCH RESULTS ===")
+            # for i, result in enumerate(unique_results[:20]):  # Show first 20 results
+            #     content_preview = (
+            #         result.get("content", "")[:200] + "..."
+            #         if len(result.get("content", "")) > 200
+            #         else result.get("content", "")
+            #     )
+            #     metadata = result.get("metadata", {})
+            #     print(f"Result {i + 1}:")
+            #     print(f"  File: {metadata.get('filename', 'Unknown')}")
+            #     print(f"  Page: {metadata.get('page_number', 'Unknown')}")
+            #     print(f"  Content: {content_preview}")
+            #     print(f"  Score: {result.get('combined_score', 'N/A')}")
+            #     print("---")
+            # print("=== END DEBUG ===\n")
+
+            # DEBUG: Check what TravelCare chunks exist
+            print("\n=== TRAVELCARE CHUNKS DEBUG ===")
+            travelcare_chunks = [
+                r
+                for r in unique_results
+                if "TravelCare" in r.get("metadata", {}).get("filename", "")
+            ]
+            print(f"Found {len(travelcare_chunks)} TravelCare chunks in results")
+
+            if len(travelcare_chunks) == 0:
+                print("PROBLEM: No TravelCare chunks found in search results!")
+                # Let's check if TravelCare chunks exist at all in the index
+                all_results_raw = self.search_engine.hybrid_search(
+                    "travel insurance rental", top_k=100
+                )
+                travelcare_raw = [
+                    r
+                    for r in all_results_raw
+                    if "TravelCare" in r.get("metadata", {}).get("filename", "")
+                ]
+                print(
+                    f"Found {len(travelcare_raw)} TravelCare chunks when searching 'travel insurance rental'"
+                )
+            print("=== END TRAVELCARE DEBUG ===\n")
+
+            print("\n=== TRAVELCARE CONTENT DEBUG ===")
+            travel_results = self.search_engine.hybrid_search(
+                "travel insurance", top_k=20
+            )
+            travelcare_found = False
+            for i, result in enumerate(travel_results[:10]):
+                metadata = result.get("metadata", {})
+                filename = metadata.get("filename", "")
+                if "TravelCare" in filename:
+                    print(f"TravelCare Chunk {i}:")
+                    print(f"File: {filename}")
+                    print(f"Page: {metadata.get('page_number', 'Unknown')}")
+                    print(f"Content: {result.get('content', '')[:300]}...")
+                    print("---")
+                    travelcare_found = True
+
+            if not travelcare_found:
+                print(
+                    "🚨 NO TravelCare chunks found even with 'travel insurance' search!"
+                )
+                print("Checking if ANY TravelCare chunks exist in the index...")
+
+                # Check all possible searches
+                for search_term in [
+                    "TravelCare",
+                    "GREAT",
+                    "rental",
+                    "vehicle",
+                    "excess",
+                ]:
+                    test_results = self.search_engine.hybrid_search(
+                        search_term, top_k=50
+                    )
+                    travelcare_count = sum(
+                        1
+                        for r in test_results
+                        if "TravelCare" in r.get("metadata", {}).get("filename", "")
+                    )
+                    print(
+                        f"  Search '{search_term}': {travelcare_count} TravelCare chunks"
+                    )
+
+            print("=== END CONTENT DEBUG ===\n")
+
+            # DEBUG: Output all search results to file for inspection
+            print("Writing all search results to debug_search_results.txt...")
+            debug_filename = f"debug_search_results_{int(time.time())}.txt"
+            with open(debug_filename, "w", encoding="utf-8") as f:
+                f.write(f"DEBUG: Search Results for Query: {query}\n")
+                f.write(f"Expanded Query: {expanded_query}\n")
+                f.write("=" * 80 + "\n\n")
+
+                # Write the top 50 results
+                for i, result in enumerate(unique_results[:50], 1):
+                    metadata = result.get("metadata", {})
+                    content = result.get("content", "")
+
+                    f.write(f"RESULT #{i}\n")
+                    f.write(f"File: {metadata.get('filename', 'Unknown')}\n")
+                    f.write(f"Page: {metadata.get('page_number', 'Unknown')}\n")
+                    f.write(f"Score: {result.get('combined_score', 'N/A')}\n")
+                    f.write(f"Content Length: {len(content)} chars\n")
+                    f.write("-" * 40 + "\n")
+                    f.write(f"CONTENT:\n{content}\n")
+                    f.write("=" * 80 + "\n\n")
+
+                # Also write a separate section for TravelCare chunks specifically
+                f.write("\n\nTRAVELCARE CHUNKS SPECIFICALLY:\n")
+                f.write("=" * 80 + "\n")
+
+                travelcare_debug_results = self.search_engine.hybrid_search(
+                    "GREAT TravelCare", top_k=100
+                )
+                travelcare_chunks = [
+                    r
+                    for r in travelcare_debug_results
+                    if "TravelCare" in r.get("metadata", {}).get("filename", "")
+                ]
+
+                if travelcare_chunks:
+                    for i, chunk in enumerate(travelcare_chunks[:20], 1):
+                        metadata = chunk.get("metadata", {})
+                        content = chunk.get("content", "")
+                        f.write(f"TRAVELCARE CHUNK #{i}\n")
+                        f.write(f"File: {metadata.get('filename', 'Unknown')}\n")
+                        f.write(f"Page: {metadata.get('page_number', 'Unknown')}\n")
+                        f.write(f"Content: {content}\n")
+                        f.write("-" * 40 + "\n")
+                else:
+                    f.write("NO TRAVELCARE CHUNKS FOUND!\n")
+
+            print(f"Debug file written: {debug_filename}")
 
             if not unique_results:
                 if is_personal_batch and self.user_profile:
-                    return f"Based on your profile, I couldn't find relevant information in your specific policy documents ('{', '.join(self.user_profile.get('policies_owned',[]))}') for the question: '{query}'."
+                    return f"Based on your profile, I couldn't find relevant information in your specific policy documents ('{', '.join(self.user_profile.get('policies_owned', []))}') for the question: '{query}'."
                 else:
                     return f"No relevant information found in the documents of batch '{target_batch}' for the question: '{query}'."
 
@@ -231,26 +368,31 @@ class QueryProcessor:
         except Exception as e:
             # Log the full error for debugging
             import traceback
+
             print(f"An unexpected error occurred in process_query: {e}")
             traceback.print_exc()
             return f"An error occurred while processing your query. Please check logs. Error: {e}"
 
-    def _generate_response(self, original_query: str, search_results: List[Dict], is_personal_batch: bool) -> str:
+    def _generate_response(
+        self, original_query: str, search_results: List[Dict], is_personal_batch: bool
+    ) -> str:
         """Generate comprehensive response using retrieved chunks and potentially user profile."""
         if not search_results:
             return "I couldn't find any relevant information in the documents to answer your question."
 
         context_parts = []
         max_chunks_for_context = 15
-        cited_filenames = set() # keeps track of which documents we found
+        cited_filenames = set()  # keeps track of which documents we found
 
-        print(f"Building context from top {min(len(search_results), max_chunks_for_context)} chunks...")
+        print(
+            f"Building context from top {min(len(search_results), max_chunks_for_context)} chunks..."
+        )
         for i, result in enumerate(search_results[:max_chunks_for_context], 1):
-            content = result.get('content', '').strip()
-            metadata = result.get('metadata', {})
+            content = result.get("content", "").strip()
+            metadata = result.get("metadata", {})
             if content:
-                filename = metadata.get('filename', 'Unknown Document')
-                page = metadata.get('page_number', 'N/A')
+                filename = metadata.get("filename", "Unknown Document")
+                page = metadata.get("page_number", "N/A")
                 source_ref = f"[Source {i}: {filename}, Page {page}]"
                 context_parts.append(f"{source_ref}\n{content}")
                 cited_filenames.add(filename)
@@ -260,85 +402,55 @@ class QueryProcessor:
 
         context_from_docs = "\n\n---\n\n".join(context_parts)
 
-        policy_data_string = ""
-        profile_info_string = ""
-        user_name = "User" # Default fallback
+        # Simple profile handling for basic profile
         if is_personal_batch and self.user_profile:
-            print("Including user profile and ALL structured policy data in the prompt.")
-            profile_items = []
-            policy_data_items = []
+            user_name = self.user_profile.get("name", "User")
+            profile_info = f"\n\nUSER PROFILE:\n- User Name: {user_name}"
+        else:
+            user_name = "User"
+            profile_info = ""
 
-            user_name = self.user_profile.get('name', 'User')
-            if user_name:
-                profile_items.append(f"- User Name: {user_name}")
+        salutation = f"Hi {user_name.split()[0] if user_name != 'User' else 'Hi'},"
 
-            # Inject ALL policy details from the comprehensive profile
-            for policy in self.user_profile.get("policy_details", []):
-                print(f"Injecting structured data for: {policy.get('filename')}")
-                policy_data_items.append(json.dumps(policy, indent=2))
+        # Clean, simple prompt
+        prompt_instructions = f"""You are an expert financial advisor specializing in insurance policy analysis.
+    Your task is to answer the user's question about their insurance coverage.
 
-            # Add general profile info
-            profile_info_string = "\n\nUSER PROFILE:\n" + "\n".join(profile_items)
+    User Question: {original_query}
+    {profile_info}
 
-            # Add the structured policy data
-            if policy_data_items:
-                policy_data_string = "\n\nSTRUCTURED USER POLICY DATA (FOR REASONING):\n" + "\n---\n".join(policy_data_items)
+    POLICY DOCUMENT CHUNKS:
+    --- START OF DOCUMENTS ---
+    {context_from_docs}
+    --- END OF DOCUMENTS ---
 
-        salutation = f"Hi {user_name},"
+    CRITICAL RESPONSE RULES:
+    1. **Base your answer on the document chunks above**
+    2. **Cite every fact with [Source X: filename.pdf, Page Y]**
+    3. **If you find relevant coverage information, explain it clearly**
+    4. **If information is missing, state that clearly**
+    5. **Start your response with: "{salutation}"**
 
-        # --- Construct the Final Prompt ---
-        prompt_instructions = f"""You are an expert financial advisor with STRICT EVIDENCE REQUIREMENTS.
-Your task is to answer the user's question about their insurance portfolio.
+    Generate a helpful response now:
+    """
 
-You are given two types of context:
-1.  **STRUCTURED USER POLICY DATA:** Clean JSON data for ALL of the user's policies. This is your primary source of truth for coverage details, benefit amounts, and what policies exist.
-2.  **AVAILABLE DOCUMENTS:** A small set of messy, raw text chunks from the original PDF policy files. These are *only* for finding citations. They may not be complete and may be missing policies.
-
-Your Task: Answer the following question:
->>> {original_query} <<<
-{profile_info_string}
-{policy_data_string}
-
-AVAILABLE DOCUMENTS (FOR CITATION ONLY):
---- START OF DOCUMENTS ---
-{context_from_docs}
---- END OF DOCUMENTS ---
-
-CRITICAL RESPONSE RULES:
-1.  **Trust Structured Data First:** Base your answer on the `STRUCTURED USER POLICY DATA`. This is the complete, correct information.
-2.  **Find Citation in Documents:** After finding the answer in the structured data, you MUST try to locate supporting evidence for it in the `AVAILABLE DOCUMENTS`.
-3.  **Cite Everything:** If you find a supporting citation, end the fact with [Source X: filename.pdf, Page Y].
-4.  **Handle Missing Citations:** If you find information in the `STRUCTURED USER POLICY DATA` (e.g., 'rental_vehicle_excess: 1500') but CANNOT find a matching citation in the `AVAILABLE DOCUMENTS` (the raw text), you MUST state the fact and cite the `filename` from the structured data. Example: `...S$1,500 [Source: GREAT_TravelCare.pdf, from your policy profile]`.
-5.  **Handle Missing Information:** If the information is not in the `STRUCTURED USER POLICY DATA` or the `AVAILABLE DOCUMENTS`, state that the information is not available.
-6.  **Perform Calculations:** If the user provides numbers and the policy data provides coverage amounts, perform simple calculations to help the user.
-7.  **Address the User By Name:** You MUST start the response with the exact salutation: "{salutation}". Do not invent a different name.
-8.  **Be Comprehensive:** Check ALL policies in the `STRUCTURED USER POLICY DATA` for relevance to the user's question.
-9.  **Add Sources Section:** After your complete answer, add a horizontal rule (---)
-
-PROHIBITED:
-- Answering without citations (must use [Source X] or [Source: filename.pdf, from your policy profile]).
-- Using information *only* from the messy `AVAILABLE DOCUMENTS` if it contradicts the `STRUCTURED USER POLICY DATA`.
-- Inventing a user name or a persona for yourself.
-- Starting the response with any text other than the exact salutation: "{salutation}"
-
-Generate the answer now following all rules:
-"""
-
-        # --- Call OpenAI API ---
+        # Call OpenAI API
         try:
             print("Sending request to OpenAI API...")
             if not self.client:
-                 raise ValueError("OpenAI client is not initialized.")
+                raise ValueError("OpenAI client is not initialized.")
 
             response = self.client.chat.completions.create(
-                model="gpt-4o", # Keep gpt-4o for this complex reasoning task
+                model="gpt-4o",
                 messages=[
-                    {"role": "system", "content": "You are a precise, expert financial advisor. You answer questions by combining structured JSON data with citable text snippets from policy documents."},
-                    {"role": "user", "content": prompt_instructions}
+                    {
+                        "role": "system",
+                        "content": "You are an expert financial advisor. Answer insurance questions using only the provided document chunks, with proper citations.",
+                    },
+                    {"role": "user", "content": prompt_instructions},
                 ],
                 max_tokens=1500,
                 temperature=0.05,
-                stop=None
             )
 
             final_answer = response.choices[0].message.content.strip()
