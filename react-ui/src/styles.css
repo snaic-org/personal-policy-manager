@@ -415,6 +415,24 @@ html, body, #root {
   color: #555;
 }
 
+/* --- Citation Links --- */
+.citation-link {
+  color: #1976d2;
+  text-decoration: none;
+  font-weight: 500;
+  border-bottom: 1px solid #1976d2;
+  padding-bottom: 1px;
+  transition: all 0.2s ease;
+}
+.citation-link:hover {
+  color: #1565c0;
+  border-bottom-color: #1565c0;
+  background-color: #e3f2fd;
+}
+.citation-link:active {
+  color: #0d47a1;
+}
+
 /* --- Auth Page --- */
 .auth-container {
   width: 100%;

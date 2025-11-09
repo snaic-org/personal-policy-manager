@@ -1,5 +1,96 @@
 import React from 'react';
 
+const BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
+/**
+ * Handle citation click - fetch file with auth and open in new tab
+ */
+async function handleCitationClick(filename) {
+  try {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      alert('Please log in to view files');
+      return;
+    }
+
+    const response = await fetch(`${BASE}/files/${filename}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to load file' }));
+      alert(error.error || 'Failed to load file');
+      return;
+    }
+
+    // Get the file as a blob
+    const blob = await response.blob();
+
+    // Create a blob URL
+    const blobUrl = URL.createObjectURL(blob);
+
+    // Open in new tab
+    const newWindow = window.open(blobUrl, '_blank');
+
+    // Clean up the blob URL after a delay (to allow the file to load)
+    if (newWindow) {
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    }
+  } catch (error) {
+    console.error('Error opening file:', error);
+    alert('Failed to open file: ' + error.message);
+  }
+}
+
+/**
+ * Parse text to find citations like [Source 1: filename.pdf, Page 5]
+ * and convert them to clickable links
+ */
+function parseTextWithCitations(text) {
+  const citationRegex = /\[Source \d+: ([^,]+), Page (\d+)\]/g;
+  const parts = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = citationRegex.exec(text)) !== null) {
+    // Add text before the citation
+    if (match.index > lastIndex) {
+      parts.push(text.substring(lastIndex, match.index));
+    }
+
+    // Add the citation as a clickable link
+    const filename = match[1];
+    const page = match[2];
+    const citationText = match[0];
+
+    parts.push(
+      <a
+        key={match.index}
+        href="#"
+        onClick={(e) => {
+          e.preventDefault();
+          handleCitationClick(filename);
+        }}
+        className="citation-link"
+        title={`Open ${filename} in new tab`}
+      >
+        {citationText}
+      </a>
+    );
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Add remaining text after last citation
+  if (lastIndex < text.length) {
+    parts.push(text.substring(lastIndex));
+  }
+
+  return parts.length > 0 ? parts : text;
+}
+
 /**
  * A helper function to render a block of text, converting
  * paragraphs and bullet lists into proper HTML.
@@ -16,20 +107,21 @@ function renderContentLines(contentBlock) {
 
     if (trimmedLine.startsWith('-')) {
       // If it's a list item, add to the current list
-      currentList.push(trimmedLine.replace('-', '').trim());
+      const listItemText = trimmedLine.replace('-', '').trim();
+      currentList.push({ text: listItemText, key: index });
     } else {
       // Not a list item. First, push any existing list.
       if (currentList.length > 0) {
         elements.push(
           <ul key={`list-${index}`} className="message-list">
             {currentList.map((item, li) => (
-              <li key={li}>{item}</li>
+              <li key={li}>{parseTextWithCitations(item.text)}</li>
             ))}
           </ul>
         );
         currentList = []; // Reset the list
       }
-      
+
       // Now, push the current paragraph (if it's not empty)
       if (trimmedLine) {
          // Check for **Bold** text and render it
@@ -38,9 +130,9 @@ function renderContentLines(contentBlock) {
            <p key={`p-${index}`}>
              {parts.map((part, pi) => {
                if (part.startsWith('**') && part.endsWith('**')) {
-                 return <strong key={pi}>{part.slice(2, -2)}</strong>;
+                 return <strong key={pi}>{parseTextWithCitations(part.slice(2, -2))}</strong>;
                }
-               return part; // Return plain text
+               return parseTextWithCitations(part); // Parse citations in plain text
              })}
            </p>
          );
@@ -53,7 +145,7 @@ function renderContentLines(contentBlock) {
     elements.push(
       <ul key={`list-end`} className="message-list">
         {currentList.map((item, li) => (
-          <li key={li}>{item}</li>
+          <li key={li}>{parseTextWithCitations(item.text)}</li>
         ))}
       </ul>
     );

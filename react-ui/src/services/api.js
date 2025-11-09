@@ -233,3 +233,11 @@ export async function deletePolicies(filenames) {
 
   return res.json();
 }
+
+// --- Get File URL Function ---
+
+export function getFileUrl(filename) {
+  // Returns the full URL for a file in the user's document folder
+  // Used for opening files in new tabs via citation links
+  return `${BASE}/files/${filename}`;
+}

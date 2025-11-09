@@ -14,7 +14,7 @@ import os
 import json
 import traceback
 from pathlib import Path
-from flask import Flask, request, jsonify, Response, stream_with_context
+from flask import Flask, request, jsonify, Response, stream_with_context, send_file
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, JWTManager
@@ -300,7 +300,7 @@ def list_files():
     user = db.session.get(User, user_id_int)
     if not user:
         return jsonify({"error": "User not found"}), 404
-    
+
     batch_id = user.get_batch_id() # e.g., "user_1"
     user_folder = os.path.join(app.config['UPLOAD_FOLDER'], batch_id)
 
@@ -309,6 +309,68 @@ def list_files():
 
     files = os.listdir(user_folder)
     return jsonify({"files": files})
+
+@app.route('/files/<filename>', methods=['GET'])
+@jwt_required()
+def serve_file(filename):
+    """Serve a file from the user's document folder."""
+    try:
+        # Get user ID from JWT token
+        user_id_str = get_jwt_identity()
+        user_id_int = int(user_id_str)
+
+        user = db.session.get(User, user_id_int)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+
+        # Sanitize filename to prevent directory traversal
+        safe_filename = secure_filename(filename)
+        if not safe_filename or safe_filename != filename:
+            return jsonify({"error": "Invalid filename"}), 400
+
+        # Construct path to user's file
+        batch_id = user.get_batch_id()
+        user_folder = Path(app.config['UPLOAD_FOLDER']) / batch_id
+        file_path = user_folder / safe_filename
+
+        # Verify file exists and is within user's directory
+        try:
+            # Resolve to absolute path and check it's within user's folder
+            resolved_path = file_path.resolve()
+            resolved_user_folder = user_folder.resolve()
+
+            if not str(resolved_path).startswith(str(resolved_user_folder)):
+                return jsonify({"error": "Unauthorized access"}), 403
+
+            if not resolved_path.exists() or not resolved_path.is_file():
+                return jsonify({"error": "File not found"}), 404
+
+        except Exception as e:
+            print(f"Error resolving file path: {e}")
+            return jsonify({"error": "File not found"}), 404
+
+        # Determine content type based on file extension
+        file_ext = safe_filename.lower().split('.')[-1]
+        content_type_map = {
+            'pdf': 'application/pdf',
+            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'txt': 'text/plain',
+            'md': 'text/markdown'
+        }
+        content_type = content_type_map.get(file_ext, 'application/octet-stream')
+
+        # Serve the file
+        return send_file(
+            resolved_path,
+            mimetype=content_type,
+            as_attachment=False,  # Display inline in browser
+            download_name=safe_filename
+        )
+
+    except Exception as e:
+        print(f"Error serving file: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({"error": "Failed to serve file"}), 500
 
 # --- Chatbot Endpoints ---
 
