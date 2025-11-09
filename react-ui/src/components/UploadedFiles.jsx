@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getUserFiles, deletePolicies } from '../services/api';
+import { getUserFiles, deletePolicies, downloadFile } from '../services/api';
 
 export default function UploadedFiles({ refreshTrigger, onFileChange }) {
   const [files, setFiles] = useState([]);
@@ -51,7 +51,7 @@ export default function UploadedFiles({ refreshTrigger, onFileChange }) {
     if (!window.confirm(`Are you sure you want to delete ${filesToDelete.length} file(s)? This will re-process your remaining documents.`)) {
       return;
     }
-    
+
     setIsDeleting(true);
     setError(null);
     try {
@@ -63,6 +63,15 @@ export default function UploadedFiles({ refreshTrigger, onFileChange }) {
       setError(err.message);
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleDownload = async (filename) => {
+    try {
+      await downloadFile(filename);
+    } catch (err) {
+      console.error('Error downloading file:', err);
+      setError(err.message);
     }
   };
 
@@ -100,6 +109,14 @@ export default function UploadedFiles({ refreshTrigger, onFileChange }) {
                 />
                 <span className={`file-icon ${fileType}`}>{fileType}</span>
                 <span className="file-name" title={file}>{file}</span>
+                <button
+                  className="file-download-btn"
+                  onClick={() => handleDownload(file)}
+                  title={`Download ${file}`}
+                  aria-label={`Download ${file}`}
+                >
+                  ⬇
+                </button>
               </li>
             );
           })}

@@ -241,3 +241,46 @@ export function getFileUrl(filename) {
   // Used for opening files in new tabs via citation links
   return `${BASE}/files/${filename}`;
 }
+
+// --- Download File Function ---
+
+export async function downloadFile(filename) {
+  // Downloads a file from the user's document folder
+  try {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      throw new Error('Not authenticated');
+    }
+
+    const response = await fetch(`${BASE}/files/${filename}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to download file' }));
+      throw new Error(error.error || 'Failed to download file');
+    }
+
+    // Get the file as a blob
+    const blob = await response.blob();
+
+    // Create a blob URL
+    const blobUrl = URL.createObjectURL(blob);
+
+    // Create a temporary anchor element to trigger download
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = filename; // This triggers download instead of opening
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    // Clean up the blob URL
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
+  } catch (error) {
+    console.error('Error downloading file:', error);
+    throw error;
+  }
+}

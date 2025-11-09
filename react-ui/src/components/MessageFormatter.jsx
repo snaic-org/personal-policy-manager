@@ -1,4 +1,5 @@
 import React from 'react';
+import { downloadFile } from '../services/api';
 
 const BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -45,6 +46,18 @@ async function handleCitationClick(filename) {
 }
 
 /**
+ * Handle citation download
+ */
+async function handleCitationDownload(filename, event) {
+  event.stopPropagation(); // Prevent triggering the view action
+  try {
+    await downloadFile(filename);
+  } catch (error) {
+    alert('Failed to download file: ' + error.message);
+  }
+}
+
+/**
  * Parse text to find citations like [Source 1: filename.pdf, Page 5]
  * and convert them to clickable links
  */
@@ -66,18 +79,27 @@ function parseTextWithCitations(text) {
     const citationText = match[0];
 
     parts.push(
-      <a
-        key={match.index}
-        href="#"
-        onClick={(e) => {
-          e.preventDefault();
-          handleCitationClick(filename);
-        }}
-        className="citation-link"
-        title={`Open ${filename} in new tab`}
-      >
-        {citationText}
-      </a>
+      <span key={match.index} className="citation-wrapper">
+        <a
+          href="#"
+          onClick={(e) => {
+            e.preventDefault();
+            handleCitationClick(filename);
+          }}
+          className="citation-link"
+          title={`Open ${filename} in new tab`}
+        >
+          {citationText}
+        </a>
+        <button
+          onClick={(e) => handleCitationDownload(filename, e)}
+          className="citation-download-btn"
+          title={`Download ${filename}`}
+          aria-label={`Download ${filename}`}
+        >
+          ⬇
+        </button>
+      </span>
     );
 
     lastIndex = match.index + match[0].length;
