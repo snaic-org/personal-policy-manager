@@ -14,7 +14,7 @@ import os
 import json
 import traceback
 from pathlib import Path
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, JWTManager
@@ -344,14 +344,14 @@ def query_endpoint():
         user = db.session.get(User, user_id_int)
         if not user:
             return jsonify({"error": "User not found"}), 404
-        
+
         # 2. The user's batch_id is their unique ID
         batch_id = user.get_batch_id()
         data = request.get_json(force=True, silent=True) or {}
         q = data.get("query") or data.get("question")
         if not q:
             return jsonify({"error": "Missing 'query' in request body"}), 400
-        
+
         # Save the user's question to the database
         user_message = Message(user_id=user_id_int, role="user", content=q)
         db.session.add(user_message)
@@ -371,18 +371,111 @@ def query_endpoint():
         # 5. Process the query
         print(f"Processing query for batch: {batch_id}")
         resp = query_processor.process_query(q, batch_id=batch_id)
-    
+
         # Save the bot's response to the database
         bot_message = Message(user_id=user_id_int, role="bot", content=resp)
         db.session.add(bot_message)
         db.session.commit() # Commit both user and bot messages
-        
+
         return jsonify({"response": resp, "batch": batch_id})
-        
+
     except Exception as e:
         print(f"Error processing query: {str(e)}")
         print(traceback.format_exc())
         db.session.rollback() # Rollback if any error occurs
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/query/stream", methods=["POST"])
+@jwt_required()
+def query_stream_endpoint():
+    try:
+        # 1. Get user ID from their token
+        user_id_str = get_jwt_identity()
+        user_id_int = int(user_id_str)
+
+        user = db.session.get(User, user_id_int)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+
+        # 2. The user's batch_id is their unique ID
+        batch_id = user.get_batch_id()
+        data = request.get_json(force=True, silent=True) or {}
+        q = data.get("query") or data.get("question")
+        if not q:
+            return jsonify({"error": "Missing 'query' in request body"}), 400
+
+        # Save the user's question to the database
+        user_message = Message(user_id=user_id_int, role="user", content=q)
+        db.session.add(user_message)
+        db.session.commit()
+
+        # 3. Check if the user's batch exists (have they uploaded docs?)
+        if not batch_manager.get_batch_info(batch_id):
+            response_text = "I can't answer that yet. Please upload your policy documents first using the 'Upload' button."
+            bot_message = Message(user_id=user_id_int, role="bot", content=response_text)
+            db.session.add(bot_message)
+            db.session.commit()
+
+            def error_stream():
+                yield "data: " + json.dumps({"content": response_text, "done": True}) + "\n\n"
+
+            return Response(stream_with_context(error_stream()),
+                          mimetype='text/event-stream',
+                          headers={
+                              'Cache-Control': 'no-cache',
+                              'X-Accel-Buffering': 'no'
+                          })
+
+        # 4. Switch the chatbot to use ONLY this user's batch
+        if not batch_manager.switch_batch(batch_id):
+            def error_stream():
+                yield "data: " + json.dumps({"error": f"Failed to switch to user batch '{batch_id}'"}) + "\n\n"
+
+            return Response(stream_with_context(error_stream()),
+                          mimetype='text/event-stream',
+                          headers={
+                              'Cache-Control': 'no-cache',
+                              'X-Accel-Buffering': 'no'
+                          })
+
+        # 5. Stream the query processing
+        print(f"Streaming query for batch: {batch_id}")
+
+        def generate():
+            full_response = []
+            try:
+                for chunk in query_processor.process_query_stream(q, batch_id=batch_id):
+                    yield chunk
+                    # Accumulate response content for database storage
+                    try:
+                        chunk_data = json.loads(chunk.replace("data: ", "").strip())
+                        if "content" in chunk_data:
+                            full_response.append(chunk_data["content"])
+                    except:
+                        pass
+
+                # Save the complete bot response to the database
+                complete_response = "".join(full_response)
+                if complete_response:
+                    bot_message = Message(user_id=user_id_int, role="bot", content=complete_response)
+                    db.session.add(bot_message)
+                    db.session.commit()
+
+            except Exception as e:
+                print(f"Error during streaming: {str(e)}")
+                print(traceback.format_exc())
+                yield "data: " + json.dumps({"error": str(e)}) + "\n\n"
+
+        return Response(stream_with_context(generate()),
+                       mimetype='text/event-stream',
+                       headers={
+                           'Cache-Control': 'no-cache',
+                           'X-Accel-Buffering': 'no'
+                       })
+
+    except Exception as e:
+        print(f"Error processing streaming query: {str(e)}")
+        print(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
 # --- Main Server ---

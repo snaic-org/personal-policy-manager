@@ -85,10 +85,10 @@ export async function getHistory() {
 
 export async function sendQuery(query) {
   const body = { query };
-  
+
   const res = await fetch(`${BASE}/query`, {
     method: 'POST',
-    headers: { 
+    headers: {
       'Content-Type': 'application/json',
       ...getAuthHeader() // Add our token to the request
     },
@@ -101,6 +101,75 @@ export async function sendQuery(query) {
   }
 
   return res.json();
+}
+
+// --- Streaming Query Function ---
+
+export async function sendQueryStream(query, onChunk, onComplete, onError) {
+  const body = { query };
+
+  try {
+    const res = await fetch(`${BASE}/query/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader()
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (done) {
+        break;
+      }
+
+      // Decode the chunk and add to buffer
+      buffer += decoder.decode(value, { stream: true });
+
+      // Process complete SSE messages (separated by \n\n)
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop(); // Keep incomplete message in buffer
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.substring(6)); // Remove 'data: ' prefix
+
+            if (data.error) {
+              onError(new Error(data.error));
+              return;
+            }
+
+            if (data.content) {
+              onChunk(data.content);
+            }
+
+            if (data.done) {
+              onComplete();
+              return;
+            }
+          } catch (e) {
+            console.error('Error parsing SSE data:', e);
+          }
+        }
+      }
+    }
+
+    onComplete();
+  } catch (e) {
+    onError(e);
+  }
 }
 
 // --- Upload Function ---

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { sendQuery, getHistory } from '../services/api';
+import { sendQueryStream, getHistory } from '../services/api';
 import MessageFormatter from './MessageFormatter';
 
 export default function Chat({ onUploadSuccess }) {
@@ -61,25 +61,52 @@ export default function Chat({ onUploadSuccess }) {
   const handleSend = async () => {
     if (!query.trim()) return;
     setLoading(true);
-    
+
     // Optimistically add user message to UI
-    addMessage('user', query); 
+    addMessage('user', query);
     const currentQuery = query; // Save query in case user types more
     setQuery('');
     resetTextareaHeight();
 
+    // Add placeholder for bot message that will be updated as chunks arrive
+    const botMessageIndex = history.length + 1; // User message was just added
+    addMessage('bot', '');
+
     try {
-      // The backend will now save both the user message and bot response
-      const res = await sendQuery(currentQuery); 
-      const responseText = res?.response ?? res?.error ?? 'No response';
-      
-      // Optimistically add bot response to UI
-      addMessage('bot', responseText);
+      let streamedContent = '';
+
+      await sendQueryStream(
+        currentQuery,
+        // onChunk: called for each content chunk
+        (chunk) => {
+          streamedContent += chunk;
+          // Update the bot message with accumulated content
+          setHistory(prev => {
+            const updated = [...prev];
+            updated[botMessageIndex] = { role: 'bot', content: streamedContent };
+            return updated;
+          });
+        },
+        // onComplete: called when streaming is done
+        () => {
+          setLoading(false);
+        },
+        // onError: called if there's an error
+        (error) => {
+          setHistory(prev => {
+            const updated = [...prev];
+            updated[botMessageIndex] = { role: 'bot', content: `Error: ${error.message}` };
+            return updated;
+          });
+          setLoading(false);
+        }
+      );
     } catch (e) {
-      addMessage('bot', `Error: ${e.message}`);
-      // If server failed, we should remove the user's optimistic message
-      // (For simplicity, we'll leave it, but a real app might remove it)
-    } finally {
+      setHistory(prev => {
+        const updated = [...prev];
+        updated[botMessageIndex] = { role: 'bot', content: `Error: ${e.message}` };
+        return updated;
+      });
       setLoading(false);
     }
   };
