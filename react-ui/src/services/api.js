@@ -45,141 +45,14 @@ function getAuthHeader() {
   return { 'Authorization': `Bearer ${token}` };
 }
 
-// --- User Info Function ---
-
-export async function getUserInfo() {
-  const res = await fetch(`${BASE}/me`, {
-    method: 'GET',
-    headers: {
-      ...getAuthHeader()
-    }
-  });
-  
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-  
-  return res.json(); // returns { id: 1, username: 'testuser' }
-}
-
-// --- Chat History Function ---
-
-export async function getHistory() {
-  const res = await fetch(`${BASE}/history`, {
-    method: 'GET',
-    headers: {
-      ...getAuthHeader()
-    }
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-  
-  return res.json(); // returns [{ role: 'user', content: '...' }, ...]
-}
-
-// --- Chatbot Functions ---
-
-export async function sendQuery(query) {
-  const body = { query };
-
-  const res = await fetch(`${BASE}/query`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...getAuthHeader() // Add our token to the request
-    },
-    body: JSON.stringify(body)
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-
-  return res.json();
-}
-
-// --- Streaming Query Function ---
-
-export async function sendQueryStream(query, onChunk, onComplete, onError) {
-  const body = { query };
-
-  try {
-    const res = await fetch(`${BASE}/query/stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...getAuthHeader()
-      },
-      body: JSON.stringify(body)
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(err.error || `HTTP ${res.status}`);
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-
-      if (done) {
-        break;
-      }
-
-      // Decode the chunk and add to buffer
-      buffer += decoder.decode(value, { stream: true });
-
-      // Process complete SSE messages (separated by \n\n)
-      const lines = buffer.split('\n\n');
-      buffer = lines.pop(); // Keep incomplete message in buffer
-
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const data = JSON.parse(line.substring(6)); // Remove 'data: ' prefix
-
-            if (data.error) {
-              onError(new Error(data.error));
-              return;
-            }
-
-            if (data.content) {
-              onChunk(data.content);
-            }
-
-            if (data.done) {
-              onComplete();
-              return;
-            }
-          } catch (e) {
-            console.error('Error parsing SSE data:', e);
-          }
-        }
-      }
-    }
-
-    onComplete();
-  } catch (e) {
-    onError(e);
-  }
-}
-
-// --- Upload Function ---
+// --- Document Management Functions ---
 
 export async function uploadPolicies(files) {
   const formData = new FormData();
   files.forEach(file => {
     formData.append('files', file);
   });
-
+  
   const res = await fetch(`${BASE}/upload`, {
     method: 'POST',
     headers: {
@@ -187,7 +60,7 @@ export async function uploadPolicies(files) {
     },
     body: formData // No Content-Type header, browser will set it for FormData
   });
-
+  
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Unknown error' }));
     throw new Error(err.error || `HTTP ${res.status}`);
@@ -195,8 +68,6 @@ export async function uploadPolicies(files) {
 
   return res.json();
 }
-
-// --- Get uploaded files Function ---
 
 export async function getUserFiles() {
   const res = await fetch(`${BASE}/list_files`, {
@@ -213,8 +84,6 @@ export async function getUserFiles() {
 
   return res.json(); // will return { files: ["a.pdf", "b.docx"] }
 }
-
-// --- Delete file Function ---
 
 export async function deletePolicies(filenames) {
   const res = await fetch(`${BASE}/delete_files`, {
@@ -234,15 +103,11 @@ export async function deletePolicies(filenames) {
   return res.json();
 }
 
-// --- Get File URL Function ---
-
 export function getFileUrl(filename) {
   // Returns the full URL for a file in the user's document folder
   // Used for opening files in new tabs via citation links
   return `${BASE}/files/${filename}`;
 }
-
-// --- Download File Function ---
 
 export async function downloadFile(filename) {
   // Downloads a file from the user's document folder
@@ -265,10 +130,10 @@ export async function downloadFile(filename) {
 
     // Get the file as a blob
     const blob = await response.blob();
-
+    
     // Create a blob URL
     const blobUrl = URL.createObjectURL(blob);
-
+    
     // Create a temporary anchor element to trigger download
     const link = document.createElement('a');
     link.href = blobUrl;
@@ -283,4 +148,161 @@ export async function downloadFile(filename) {
     console.error('Error downloading file:', error);
     throw error;
   }
+}
+
+  // --- Chatbot Functions ---
+  
+  export async function getHistory() {
+    const res = await fetch(`${BASE}/history`, {
+      method: 'GET',
+      headers: {
+        ...getAuthHeader()
+      }
+    });
+  
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    
+    return res.json(); // returns [{ role: 'user', content: '...' }, ...]
+  }
+  
+  export async function sendQuery(query) {
+    const body = { query };
+  
+    const res = await fetch(`${BASE}/query`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader() // Add our token to the request
+      },
+      body: JSON.stringify(body)
+    });
+  
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+  
+    return res.json();
+  }
+  
+  export async function sendQueryStream(query, onChunk, onComplete, onError) {
+    const body = { query };
+  
+    try {
+      const res = await fetch(`${BASE}/query/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeader()
+        },
+        body: JSON.stringify(body)
+      });
+  
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+  
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+  
+      while (true) {
+        const { done, value } = await reader.read();
+  
+        if (done) {
+          break;
+        }
+  
+        // Decode the chunk and add to buffer
+        buffer += decoder.decode(value, { stream: true });
+  
+        // Process complete SSE messages (separated by \n\n)
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop(); // Keep incomplete message in buffer
+  
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.substring(6)); // Remove 'data: ' prefix
+  
+              if (data.error) {
+                onError(new Error(data.error));
+                return;
+              }
+  
+              if (data.content) {
+                onChunk(data.content);
+              }
+  
+              if (data.done) {
+                onComplete();
+                return;
+              }
+            } catch (e) {
+              console.error('Error parsing SSE data:', e);
+            }
+          }
+        }
+      }
+  
+      onComplete();
+    } catch (e) {
+      onError(e);
+    }
+  }
+
+// --- User Profile Functions ---
+
+export async function getUserInfo() {
+  const res = await fetch(`${BASE}/me`, {
+    method: 'GET',
+    headers: {
+      ...getAuthHeader()
+    }
+  });
+  
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  
+  return res.json(); // returns { id: 1, username: 'testuser' }
+}
+
+export async function getProfile() {
+  const res = await fetch(`${BASE}/profile`, {
+    method: 'GET',
+    headers: {
+      ...getAuthHeader()
+    }
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Failed to fetch profile' }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  
+  return res.json(); // returns profile JSON
+}
+
+export async function saveProfile(profileData) {
+  const res = await fetch(`${BASE}/profile`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeader()
+    },
+    body: JSON.stringify(profileData)
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Failed to save profile' }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+
+  return res.json(); // returns { message: "..." }
 }

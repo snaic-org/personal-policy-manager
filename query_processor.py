@@ -39,29 +39,29 @@ class QueryProcessor:
         self.search_engine = None
         self.current_batch_id = None
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        self.user_profile = self._load_user_profile()  # Load profile on initialization
+        # self.user_profile = self._load_user_profile()  # Load profile on initialization
 
-    def _load_user_profile(self) -> Optional[Dict[str, Any]]:
-        """Loads the user profile from user_profile.json in the project root."""
-        profile_path = Path("user_profile_basic.json")
-        if profile_path.exists():
-            try:
-                with open(profile_path, "r") as f:
-                    profile = json.load(f)
-                    print("User profile loaded successfully.")
-                    return profile
-            except json.JSONDecodeError:
-                print("Error: user_profile.json is not valid JSON.")
-                return None
-            except Exception as e:
-                print(f"Error loading user profile: {e}")
-                return None
-        else:
-            # it's okay if the profile doesn't exist, just means no personalization
-            print(
-                "Info: user_profile.json not found. Proceeding without personalization."
-            )
-            return None
+    # def _load_user_profile(self) -> Optional[Dict[str, Any]]:
+    #     """Loads the user profile from user_profile.json in the project root."""
+    #     profile_path = Path("user_profile_basic.json")
+    #     if profile_path.exists():
+    #         try:
+    #             with open(profile_path, "r") as f:
+    #                 profile = json.load(f)
+    #                 print("User profile loaded successfully.")
+    #                 return profile
+    #         except json.JSONDecodeError:
+    #             print("Error: user_profile.json is not valid JSON.")
+    #             return None
+    #         except Exception as e:
+    #             print(f"Error loading user profile: {e}")
+    #             return None
+    #     else:
+    #         # it's okay if the profile doesn't exist, just means no personalization
+    #         print(
+    #             "Info: user_profile.json not found. Proceeding without personalization."
+    #         )
+    #         return None
 
     def _ensure_batch_loaded(self, batch_id: str) -> bool:
         """Ensure the specified batch is loaded in the search engine."""
@@ -109,33 +109,15 @@ class QueryProcessor:
                 unique_results.append(result)
                 seen_content.add(content)
         return unique_results
-
-    def _filter_results_by_profile(self, results: List[Dict]) -> List[Dict]:
+    
+    def _filter_results_by_profile(self, results: List[Dict], user_profile: Optional[Dict]) -> List[Dict]:
         """Filters search results to only include documents listed in the user profile."""
         # Only filter if a profile with policies_owned exists
-        if not self.user_profile or "policies_owned" not in self.user_profile:
+        if not user_profile or "policies_owned" not in user_profile:
             print("Info: No 'policies_owned' found in profile. Returning all results.")
             return results
 
-        owned_policies = set(self.user_profile["policies_owned"])
-        if not owned_policies:
-            print(
-                "Warning: 'policies_owned' list is empty in profile. Returning all results."
-            )
-            return results
-
-        filtered_results = []
-        for result in results:
-            # Ensure metadata and filename exist before checking
-            metadata = result.get("metadata", {})
-            filename = metadata.get("filename")
-            if filename and filename in owned_policies:
-                filtered_results.append(result)
-
-        print(
-            f"Filtered results to {len(filtered_results)} chunks based on {len(owned_policies)} owned policies."
-        )
-        return filtered_results
+        owned_policies = set(user_profile["policies_owned"])
 
     def _expand_query(self, query: str) -> str:
         """
@@ -175,8 +157,8 @@ class QueryProcessor:
         except Exception as e:
             print(f"Error during query expansion: {e}")
             return query  # Fallback to original query
-
-    def process_query(self, query: str, batch_id: str = None) -> str:
+        
+    def process_query(self, query: str, batch_id: str = None, user_profile: Optional[Dict] = None) -> str:
         """Process a query and return the response."""
         try:
             # Determine the target batch
@@ -204,29 +186,32 @@ class QueryProcessor:
             # is_personal_batch = (target_batch == "my_policies")
             is_personal_batch = target_batch.startswith("user_")
 
-            relevant_results = raw_search_results
-            if is_personal_batch:
-                if self.user_profile:
-                    relevant_results = self._filter_results_by_profile(
-                        raw_search_results
-                    )
-                else:
-                    print(
-                        "Warning: Operating in personal batch mode but no user profile loaded."
-                    )
+            # relevant_results = raw_search_results
+            # if is_personal_batch:
+            #     if user_profile:
+            #         relevant_results = self._filter_results_by_profile(
+            #             raw_search_results, user_profile
+            #         )
+            #     else:
+            #         print(
+            #             "Warning: Operating in personal batch mode but no user profile loaded."
+            #         )
 
-            unique_results = self._deduplicate_results(relevant_results)
+            # unique_results = self._deduplicate_results(relevant_results)
+            unique_results = self._deduplicate_results(raw_search_results)
             print(
                 f"Retained {len(unique_results)} unique relevant chunks after filtering/deduplication."
             )
 
             if not unique_results:
-                if is_personal_batch and self.user_profile:
-                    return f"Based on your profile, I couldn't find relevant information in your specific policy documents ('{', '.join(self.user_profile.get('policies_owned', []))}') for the question: '{query}'."
+                # if is_personal_batch and self.user_profile:
+                #     return f"Based on your profile, I couldn't find relevant information in your specific policy documents ('{', '.join(self.user_profile.get('policies_owned', []))}') for the question: '{query}'."
+                if is_personal_batch:
+                    return f"I couldn't find relevant information in your uploaded documents for the question: '{query}'."
                 else:
                     return f"No relevant information found in the documents of batch '{target_batch}' for the question: '{query}'."
 
-            response = self._generate_response(query, unique_results, is_personal_batch)
+            response = self._generate_response(query, unique_results, is_personal_batch, user_profile)
 
             processing_time = time.time() - start_time
             print(f"Total processing time: {processing_time:.2f}s")
@@ -242,7 +227,7 @@ class QueryProcessor:
             return f"An error occurred while processing your query. Please check logs. Error: {e}"
 
     def _generate_response(
-        self, original_query: str, search_results: List[Dict], is_personal_batch: bool
+        self, original_query: str, search_results: List[Dict], is_personal_batch: bool, user_profile: Optional[Dict]
     ) -> str:
         """Generate comprehensive response using retrieved chunks and potentially user profile."""
         if not search_results:
@@ -271,9 +256,9 @@ class QueryProcessor:
         context_from_docs = "\n\n---\n\n".join(context_parts)
 
         # Enhanced profile handling with policy tiers
-        if is_personal_batch and self.user_profile:
-            user_name = self.user_profile.get("name", "User")
-            policy_tiers = self.user_profile.get("policy_tiers", {})
+        if is_personal_batch and user_profile:
+            user_name = user_profile.get("name", "User")
+            policy_tiers = user_profile.get("policy_tiers", {})
 
             profile_info = f"\n\nUSER PROFILE:\n- User Name: {user_name}"
             if policy_tiers:
@@ -344,7 +329,7 @@ class QueryProcessor:
             print(f"Error during OpenAI API call: {e}")
             return "Sorry, I encountered an error while generating the response. Please try again later or check the system logs."
 
-    def process_query_stream(self, query: str, batch_id: str = None):
+    def process_query_stream(self, query: str, batch_id: str = None, user_profile: Optional[Dict] = None):
         """Process a query and yield response chunks for streaming."""
         try:
             # Determine the target batch
@@ -373,32 +358,35 @@ class QueryProcessor:
 
             is_personal_batch = target_batch.startswith("user_")
 
-            relevant_results = raw_search_results
-            if is_personal_batch:
-                if self.user_profile:
-                    relevant_results = self._filter_results_by_profile(
-                        raw_search_results
-                    )
-                else:
-                    print(
-                        "Warning: Operating in personal batch mode but no user profile loaded."
-                    )
+            # relevant_results = raw_search_results
+            # if is_personal_batch:
+            #     if user_profile:
+            #         relevant_results = self._filter_results_by_profile(
+            #             raw_search_results, user_profile
+            #         )
+            #     else:
+            #         print(
+            #             "Warning: Operating in personal batch mode but no user profile loaded."
+            #         )
 
-            unique_results = self._deduplicate_results(relevant_results)
+            # unique_results = self._deduplicate_results(relevant_results)
+            unique_results = self._deduplicate_results(raw_search_results)
             print(
                 f"Retained {len(unique_results)} unique relevant chunks after filtering/deduplication."
             )
 
             if not unique_results:
-                if is_personal_batch and self.user_profile:
-                    error_msg = f"Based on your profile, I couldn't find relevant information in your specific policy documents ('{', '.join(self.user_profile.get('policies_owned', []))}') for the question: '{query}'."
+                # if is_personal_batch and user_profile:
+                #     error_msg = f"Based on your profile, I couldn't find relevant information in your specific policy documents ('{', '.join(user_profile.get('policies_owned', []))}') for the question: '{query}'."
+                if is_personal_batch:
+                    error_msg = f"I couldn't find relevant information in your uploaded documents for the question: '{query}'."
                 else:
                     error_msg = f"No relevant information found in the documents of batch '{target_batch}' for the question: '{query}'."
                 yield "data: " + json.dumps({"content": error_msg, "done": True}) + "\n\n"
                 return
 
             # Stream the response generation
-            for chunk in self._generate_response_stream(query, unique_results, is_personal_batch):
+            for chunk in self._generate_response_stream(query, unique_results, is_personal_batch, user_profile):
                 yield chunk
 
             processing_time = time.time() - start_time
@@ -411,7 +399,7 @@ class QueryProcessor:
             yield "data: " + json.dumps({"error": f"An error occurred while processing your query: {e}"}) + "\n\n"
 
     def _generate_response_stream(
-        self, original_query: str, search_results: List[Dict], is_personal_batch: bool
+        self, original_query: str, search_results: List[Dict], is_personal_batch: bool, user_profile: Optional[Dict]
     ):
         """Generate streaming response using retrieved chunks and potentially user profile."""
         if not search_results:
@@ -442,9 +430,9 @@ class QueryProcessor:
         context_from_docs = "\n\n---\n\n".join(context_parts)
 
         # Enhanced profile handling with policy tiers
-        if is_personal_batch and self.user_profile:
-            user_name = self.user_profile.get("name", "User")
-            policy_tiers = self.user_profile.get("policy_tiers", {})
+        if is_personal_batch and user_profile:
+            user_name = user_profile.get("name", "User")
+            policy_tiers = user_profile.get("policy_tiers", {})
 
             profile_info = f"\n\nUSER PROFILE:\n- User Name: {user_name}"
             if policy_tiers:

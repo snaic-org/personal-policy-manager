@@ -1,6 +1,8 @@
 import React from 'react';
 import Upload from './Upload';
 import UploadedFiles from './UploadedFiles';
+import ProfileForm from './ProfileForm';
+import PolicyTiers from './PolicyTiers';
 
 export default function Sidebar({ user, onUploadSuccess, refreshTrigger }) {
   return (
@@ -22,6 +24,8 @@ export default function Sidebar({ user, onUploadSuccess, refreshTrigger }) {
             refreshTrigger={refreshTrigger}
             onFileChange={onUploadSuccess}
         />
+        <ProfileForm />
+        <PolicyTiers refreshTrigger={refreshTrigger} />
       </div>
     </aside>
   );

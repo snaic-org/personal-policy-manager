@@ -458,6 +458,16 @@ def query_stream_endpoint():
         user = db.session.get(User, user_id_int)
         if not user:
             return jsonify({"error": "User not found"}), 404
+        
+        # Load this specific user's profile
+        user_profile = None
+        profile_path = _get_user_profile_path(user)
+        if profile_path.exists():
+            try:
+                with open(profile_path, "r") as f:
+                    user_profile = json.load(f)
+            except Exception as e:
+                print(f"Warning: Could not load profile for user {user.id}: {e}")
 
         # 2. The user's batch_id is their unique ID
         batch_id = user.get_batch_id()
@@ -506,7 +516,7 @@ def query_stream_endpoint():
         def generate():
             full_response = []
             try:
-                for chunk in query_processor.process_query_stream(q, batch_id=batch_id):
+                for chunk in query_processor.process_query_stream(q, batch_id=batch_id, user_profile=user_profile):
                     yield chunk
                     # Accumulate response content for database storage
                     try:
@@ -539,6 +549,61 @@ def query_stream_endpoint():
         print(f"Error processing streaming query: {str(e)}")
         print(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
+
+# --- User Profile Endpoints ---
+
+@app.route("/profile", methods=["GET"])
+@jwt_required()
+def get_user_profile():
+    """Gets the current user's profile JSON."""
+    user_id_str = get_jwt_identity()
+    user = db.session.get(User, int(user_id_str))
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    
+    profile_path = _get_user_profile_path(user)
+    
+    if profile_path.exists():
+        return send_file(profile_path, mimetype='application/json')
+    else:
+        # Fallback to the basic template if they don't have one
+        # default_profile_path = Path("user_profile_basic.json")
+        # if default_profile_path.exists():
+        #      return send_file(default_profile_path, mimetype='application/json')
+        return jsonify({}) # Return empty if no default either
+
+@app.route("/profile", methods=["POST"])
+@jwt_required()
+def save_user_profile():
+    """Saves the current user's profile JSON."""
+    user_id_str = get_jwt_identity()
+    user = db.session.get(User, int(user_id_str))
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    
+    profile_data = request.get_json()
+    if not profile_data:
+        return jsonify({"error": "No JSON data provided"}), 400
+    
+    profile_path = _get_user_profile_path(user)
+    try:
+        # Validate that it's at least valid JSON
+        # We trust the user to get the schema right, for now
+        with open(profile_path, "w") as f:
+            json.dump(profile_data, f, indent=2)
+        return jsonify({"message": "Profile saved successfully"}), 200
+    except Exception as e:
+        print(f"Error saving profile: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# --- Helper Functions ---
+def _get_user_profile_path(user: User) -> Path:
+    """Gets the path to the user's specific profile JSON file."""
+    batch_id = user.get_batch_id()
+    # Store it in their UPLOAD_FOLDER, which is persistent
+    user_doc_dir = Path(app.config['UPLOAD_FOLDER']) / batch_id
+    user_doc_dir.mkdir(parents=True, exist_ok=True) # Ensure it exists
+    return user_doc_dir / "user_profile.json"
 
 # --- Main Server ---
 def run_api_server(host="0.0.0.0", port=5000):
