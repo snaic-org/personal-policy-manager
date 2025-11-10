@@ -43,6 +43,7 @@ pip install -r requirements.txt
 
 # Set OpenAI API key in .env file
 echo "OPENAI_API_KEY=your-api-key-here" > .env
+echo "TAVILY_API_KEY=your-api-key-here" > .env
 ```
 
 ### 2. Add Documents
@@ -465,7 +466,7 @@ For comparison queries:
    - **Solution**: Ensure you're using the updated `query_processor.py` with JSON format instructions
 
 2. **No embeddings generated**
-   - Check `OPENAI_API_KEY` is set in `.env` file
+   - Check `OPENAI_API_KEY` and `TAVILY_API_KEY` is set in `.env` file
    - Verify internet connection
    - Check API quota: https://platform.openai.com/usage
 
