@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { sendQueryStream, getHistory } from '../services/api';
 import MessageFormatter from './MessageFormatter';
 
+const TYPING_PLACEHOLDER = '...'; // A constant for our placeholder
+
 export default function Chat({ onUploadSuccess }) {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
@@ -143,7 +145,21 @@ export default function Chat({ onUploadSuccess }) {
           <div key={i} className={`message ${m.role}`}>
             <div className="message-header">{m.role === 'user' ? 'You' : 'Bot'}</div>
             <div className="message-content">
-              {m.role === 'bot' ? <MessageFormatter content={m.content} /> : m.content}
+              {m.role === 'user' ? (
+                m.content
+              ) :
+              // Check if it's the last message, it's a bot,
+              // content is empty, AND we are in the loading state.
+              i === history.length - 1 && m.content === '' && loading ? (
+                <div className="loading-indicator">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+              ) : (
+                <MessageFormatter content={m.content} />
+              )
+              }
             </div>
           </div>
         ))}

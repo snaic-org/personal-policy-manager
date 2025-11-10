@@ -557,3 +557,35 @@ html, body, #root {
 .form-switch-link:hover {
   color: #1565c0;
 }
+
+/* --- Loading Indicator --- */
+.loading-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start; 
+  height: 24px; /* Matches the line-height */
+  padding-top: 8px; /* Give it some space */
+}
+.loading-indicator span {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #888; /* Color of the dots */
+  margin: 0 3px;
+  animation: loading-bounce 1.4s infinite ease-in-out both;
+}
+.loading-indicator span:nth-child(1) {
+  animation-delay: -0.32s;
+}
+.loading-indicator span:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+@keyframes loading-bounce {
+  0%, 80%, 100% {
+    transform: scale(0);
+  } 40% {
+    transform: scale(1.0);
+  }
+}
