@@ -17,10 +17,12 @@ from pathlib import Path
 from flask import Flask, request, jsonify, Response, stream_with_context, send_file
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
-from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, JWTManager
+from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, JWTManager, get_jwt
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from datetime import timedelta, datetime, UTC
+from functools import wraps
+import secrets
 
 # Add current directory to path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -42,6 +44,10 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=1)
 app.config['UPLOAD_FOLDER'] = 'documents' # We'll create subfolders per user
 
+INSURER_INVITE_CODE = os.getenv('INSURER_INVITE_CODE', 'default-insurer-invite-code-for-dev')
+if INSURER_INVITE_CODE == 'default-insurer-invite-code-for-dev':
+    print("WARNING: Using default INSURER_INVITE_CODE. Set this in your .env file for security.")
+
 # --- Initialize Extensions ---
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
@@ -57,6 +63,8 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
+    role = db.Column(db.String(20), nullable=False, default='customer')
+    created_by_insurer_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -78,11 +86,52 @@ class Message(db.Model):
     timestamp = db.Column(db.DateTime, default=datetime.now(UTC))
 
     user = db.relationship('User', backref=db.backref('messages', lazy=True))
+    
+# --- Decorators ---
+
+def insurer_required():
+    def wrapper(fn):
+        @wraps(fn)
+        @jwt_required()
+        def decorator(*args, **kwargs):
+            claims = get_jwt()
+            if claims.get('role') != 'insurer':
+                return jsonify({"error": "Insurer access required"}), 403
+
+            # Also check for user in DB for extra security
+            user_id = int(get_jwt_identity())
+            user = db.session.get(User, user_id)
+            if not user or user.role != 'insurer':
+                return jsonify({"error": "Invalid insurer account"}), 403
+
+            return fn(*args, **kwargs)
+        return decorator
+    return wrapper
+
+def customer_required():
+    def wrapper(fn):
+        @wraps(fn)
+        @jwt_required()
+        def decorator(*args, **kwargs):
+            claims = get_jwt()
+            if claims.get('role') != 'customer':
+                return jsonify({"error": "Customer access required"}), 403
+
+            # Also check for user in DB for extra security
+            user_id = int(get_jwt_identity())
+            user = db.session.get(User, user_id)
+            if not user or user.role != 'customer':
+                return jsonify({"error": "Invalid customer account"}), 403
+
+            return fn(*args, **kwargs)
+        return decorator
+    return wrapper
 
 # --- Authentication Endpoints ---
 
 @app.route("/register", methods=["POST"])
 def register():
+    """Handles PUBLIC customer registration."""
     data = request.get_json()
     username = data.get("username")
     password = data.get("password")
@@ -97,7 +146,7 @@ def register():
     if User.query.filter_by(username=username).first():
         return jsonify({"error": "Username already exists"}), 409
 
-    new_user = User(username=username)
+    new_user = User(username=username, role='customer')
     new_user.set_password(password)
     
     db.session.add(new_user)
@@ -109,6 +158,43 @@ def register():
 
     return jsonify({"message": "User registered successfully"}), 201
 
+@app.route("/register/insurer", methods=["POST"])
+def register_insurer():
+    """Handles PROTECTED insurer registration using an invite code."""
+    data = request.get_json()
+    username = data.get("username")
+    password = data.get("password")
+    password_confirm = data.get("passwordConfirm")
+    invite_code = data.get("inviteCode")
+
+    if not username or not password or not password_confirm:
+        return jsonify({"error": "Username, password, and confirmation are required"}), 400
+        
+    if not invite_code:
+        return jsonify({"error": "Invite code is required"}), 400
+
+    if password != password_confirm:
+        return jsonify({"error": "Passwords do not match"}), 400
+    
+    # --- Check Invite Code ---
+    if invite_code != INSURER_INVITE_CODE:
+        return jsonify({"error": "Invalid invite code"}), 403
+    
+    if User.query.filter_by(username=username).first():
+        return jsonify({"error": "Username already exists"}), 409
+
+    # --- Create user with 'insurer' role ---
+    new_user = User(username=username, role='insurer')
+    new_user.set_password(password)
+    
+    db.session.add(new_user)
+    db.session.commit()
+    
+    # Note: Insurers don't get a personal document folder.
+    # They manage their customers' folders.
+
+    return jsonify({"message": "Insurer account registered successfully"}), 201
+
 @app.route("/login", methods=["POST"])
 def login():
     data = request.get_json()
@@ -119,9 +205,12 @@ def login():
 
     if not user or not user.check_password(password):
         return jsonify({"error": "Invalid username or password"}), 401
-
-    access_token = create_access_token(identity=str(user.id))
-    return jsonify(access_token=access_token)
+    
+    access_token = create_access_token(
+        identity=str(user.id),
+        additional_claims={'role': user.role}
+    )
+    return jsonify(access_token=access_token, role=user.role)
 
 @app.route("/me", methods=["GET"])
 @jwt_required()
@@ -148,7 +237,7 @@ def get_user_info():
 # --- Document Management Endpoints ---
 
 @app.route("/upload", methods=["POST"])
-@jwt_required()
+@customer_required()
 def upload_policies():
     try:
         user_id_str = get_jwt_identity()
@@ -452,7 +541,7 @@ def query_endpoint():
         return jsonify({"error": str(e)}), 500
 
 @app.route("/query/stream", methods=["POST"])
-@jwt_required()
+@customer_required()
 def query_stream_endpoint():
     try:
         # 1. Get user ID from their token
@@ -609,7 +698,6 @@ def save_user_profile():
         print(f"Error saving profile: {e}")
         return jsonify({"error": str(e)}), 500
 
-# --- Helper Functions ---
 def _get_user_profile_path(user: User) -> Path:
     """Gets the path to the user's specific profile JSON file."""
     batch_id = user.get_batch_id()
@@ -617,6 +705,278 @@ def _get_user_profile_path(user: User) -> Path:
     user_doc_dir = Path(app.config['UPLOAD_FOLDER']) / batch_id
     user_doc_dir.mkdir(parents=True, exist_ok=True) # Ensure it exists
     return user_doc_dir / "user_profile.json"
+
+# --- Insurer Endpoints ---
+
+@app.route("/api/insurer/customers", methods=["POST"])
+@insurer_required()
+def create_customer():
+    data = request.get_json()
+    username = data.get("username")
+    if not username:
+        return jsonify({"error": "Username is required"}), 400
+
+    if User.query.filter_by(username=username).first():
+        return jsonify({"error": "Username already exists"}), 409
+
+    # Get the currently logged-in insurer's ID
+    insurer_id = int(get_jwt_identity())
+
+    # Auto-generate a password
+    password = secrets.token_urlsafe(16)
+
+    new_customer = User(
+        username=username,
+        role='customer',
+        created_by_insurer_id=insurer_id
+    )
+    new_customer.set_password(password)
+
+    # Also create their document upload directory
+    user_doc_dir = Path(app.config['UPLOAD_FOLDER']) / new_customer.get_batch_id()
+    user_doc_dir.mkdir(parents=True, exist_ok=True)
+
+    db.session.add(new_customer)
+    db.session.commit()
+
+    # Return the credentials *once* to the insurer
+    return jsonify({
+        "message": "Customer created successfully",
+        "customer_id": new_customer.id,
+        "username": new_customer.username,
+        "password": password # Insurer must copy this
+    }), 201
+    
+@app.route("/api/insurer/customers", methods=["GET"])
+@insurer_required()
+def list_customers():
+    insurer_id = int(get_jwt_identity())
+    customers = User.query.filter_by(
+        created_by_insurer_id=insurer_id,
+        role='customer'
+    ).all()
+
+    customer_list = [{"id": c.id, "username": c.username} for c in customers]
+    return jsonify(customer_list), 200
+
+@app.route("/api/insurer/upload/<int:customer_id>", methods=["POST"])
+@insurer_required()
+def upload_for_customer(customer_id):
+    try:
+        insurer_id = int(get_jwt_identity())
+
+        # --- TENANCY CHECK ---
+        customer = db.session.get(User, customer_id)
+        if not customer or customer.created_by_insurer_id != insurer_id:
+            return jsonify({"error": "Customer not found or not managed by you"}), 404
+
+        batch_id = customer.get_batch_id() # e.g., "user_123"
+        user_doc_dir = Path(app.config['UPLOAD_FOLDER']) / batch_id
+            
+        
+        if 'files' not in request.files:
+            return jsonify({"error": "No files part in request"}), 400
+        
+        files = request.files.getlist('files')
+        if not files:
+             return jsonify({"error": "No files selected"}), 400
+
+        saved_files = []
+        processed_filenames = [] 
+        
+        for file in files:
+            if not file.filename or file.filename.strip() == "":
+                continue  
+                
+            filename = secure_filename(file.filename)
+            
+            if not filename:
+                continue
+                
+            filepath = user_doc_dir / filename
+            file.save(filepath)
+            saved_files.append(str(filepath))
+            processed_filenames.append(filename)
+        
+        if not saved_files:
+            return jsonify({"error": "No valid files were saved. Check filenames."}), 400
+
+        print(f"Processing batch '{batch_id}' with {len(saved_files)} files...")
+        
+        # --- Trigger Batch Processing ---
+        user_doc_path = f"documents/{batch_id}/"
+        document_files = []
+        for ext in ['*.pdf', '*.docx', '*.txt', '*.md']:
+            document_files.extend(Path(user_doc_path).glob(ext))
+            
+        if not document_files:
+            return jsonify({"error": "No processable documents found after upload."}), 400
+
+        success = doc_processor.create_batch(
+            batch_id=batch_id,
+            document_paths=[str(doc) for doc in document_files],
+            batch_name=f"{customer.username}'s Policies",
+            description=f"Personal policies for user {customer.username}"
+        )
+        
+        if not success:
+            return jsonify({"error": "Failed to process documents"}), 500
+
+        return jsonify({"message": f"Successfully uploaded and processed: {', '.join(processed_filenames)}"}), 201
+
+    except Exception as e:
+        print(f"Error processing upload: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+    
+@app.route("/api/insurer/query/stream/<int:customer_id>", methods=["POST"])
+@insurer_required()
+def query_for_customer(customer_id):
+    try:
+        insurer_id = int(get_jwt_identity())
+
+        # --- TENANCY CHECK ---
+        customer = db.session.get(User, customer_id)
+        if not customer or customer.created_by_insurer_id != insurer_id:
+            return jsonify({"error": "Customer not found or not managed by you"}), 404
+
+        # --- Load customer's profile ---
+        user_profile = None
+        profile_path = _get_user_profile_path(customer) # Use helper
+        if profile_path.exists():
+            with open(profile_path, "r") as f:
+                user_profile = json.load(f)
+
+        # --- Use existing /query/stream logic, but with customer's batch_id ---
+        batch_id = customer.get_batch_id()
+        data = request.get_json()
+        q = data.get("query")
+        if not q:
+            return jsonify({"error": "Missing 'query' in request body"}), 400
+
+        # Save the user's question to the database
+        user_message = Message(user_id=insurer_id, role="user", content=q)
+        db.session.add(user_message)
+        db.session.commit()
+
+        # 3. Check if the user's batch exists (have they uploaded docs?)
+        if not batch_manager.get_batch_info(batch_id):
+            response_text = "I can't answer that yet. Please upload your policy documents first using the 'Upload' button."
+            bot_message = Message(user_id=insurer_id, role="bot", content=response_text)
+            db.session.add(bot_message)
+            db.session.commit()
+
+            def error_stream():
+                yield "data: " + json.dumps({"content": response_text, "done": True}) + "\n\n"
+
+            return Response(stream_with_context(error_stream()),
+                          mimetype='text/event-stream',
+                          headers={
+                              'Cache-Control': 'no-cache',
+                              'X-Accel-Buffering': 'no'
+                          })
+
+        # 4. Switch the chatbot to use ONLY this user's batch
+        if not batch_manager.switch_batch(batch_id):
+            def error_stream():
+                yield "data: " + json.dumps({"error": f"Failed to switch to user batch '{batch_id}'"}) + "\n\n"
+
+            return Response(stream_with_context(error_stream()),
+                          mimetype='text/event-stream',
+                          headers={
+                              'Cache-Control': 'no-cache',
+                              'X-Accel-Buffering': 'no'
+                          })
+
+        # 5. Stream the query processing
+        print(f"Streaming query for batch: {batch_id}")
+
+        def generate():
+            full_response = []
+            try:
+                for chunk in query_processor.process_query_stream(q, batch_id=batch_id, user_profile=user_profile):
+                    yield chunk
+                    # Accumulate response content for database storage
+                    try:
+                        chunk_data = json.loads(chunk.replace("data: ", "").strip())
+                        if "content" in chunk_data:
+                            full_response.append(chunk_data["content"])
+                    except:
+                        pass
+
+                # Save the complete bot response to the database
+                complete_response = "".join(full_response)
+                if complete_response:
+                    bot_message = Message(user_id=insurer_id, role="bot", content=complete_response)
+                    db.session.add(bot_message)
+                    db.session.commit()
+
+            except Exception as e:
+                print(f"Error during streaming: {str(e)}")
+                print(traceback.format_exc())
+                yield "data: " + json.dumps({"error": str(e)}) + "\n\n"
+
+        return Response(stream_with_context(generate()),
+                       mimetype='text/event-stream',
+                       headers={
+                           'Cache-Control': 'no-cache',
+                           'X-Accel-Buffering': 'no'
+                       })
+
+    except Exception as e:
+        print(f"Error processing streaming query: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/insurer/profile/<int:customer_id>", methods=["GET"])
+@insurer_required()
+def get_customer_profile(customer_id):
+    insurer_id = int(get_jwt_identity())
+    customer = db.session.get(User, customer_id)
+    if not customer or customer.created_by_insurer_id != insurer_id:
+        return jsonify({"error": "Customer not found or not managed by you"}), 404
+
+    profile_path = _get_user_profile_path(customer)
+    if profile_path.exists():
+        return send_file(profile_path, mimetype='application/json')
+    return jsonify({}) # Return empty profile
+
+@app.route("/api/insurer/profile/<int:customer_id>", methods=["POST"])
+@insurer_required()
+def save_customer_profile(customer_id):
+    insurer_id = int(get_jwt_identity())
+    customer = db.session.get(User, customer_id)
+    if not customer or customer.created_by_insurer_id != insurer_id:
+        return jsonify({"error": "Customer not found or not managed by you"}), 404
+    
+    # user_id_str = get_jwt_identity()
+    # user = db.session.get(User, int(user_id_str))
+    # if not user:
+    #     return jsonify({"error": "User not found"}), 404
+
+    profile_data = request.get_json()
+    if not profile_data:
+        return jsonify({"error": "No JSON data provided"}), 400
+
+    profile_path = _get_user_profile_path(customer)
+    try:
+        # Read existing profile if it exists
+        existing_profile = {}
+        if profile_path.exists():
+            with open(profile_path, "r") as f:
+                existing_profile = json.load(f)
+
+        # Merge incoming data with existing data
+        # Incoming data takes precedence
+        merged_profile = {**existing_profile, **profile_data}
+
+        # Write the merged profile back
+        with open(profile_path, "w") as f:
+            json.dump(merged_profile, f, indent=2)
+        return jsonify({"message": "Customer profile saved successfully"}), 200
+    except Exception as e:
+        print(f"Error saving profile: {e}")
+        return jsonify({"error": str(e)}), 500
 
 # --- Main Server ---
 def run_api_server(host="0.0.0.0", port=5000):
