@@ -56,7 +56,9 @@ export default function PolicyTiers({ refreshTrigger }) {
     try {
       const res = await saveProfile(updatedProfile);
       setMessage(res.message);
-      setProfile(updatedProfile); // Keep our main profile state in sync
+
+      // Refetch all data to get the merged profile from backend
+      await fetchData();
     } catch (e) {
       setError(e.message);
     } finally {

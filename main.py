@@ -308,6 +308,10 @@ def list_files():
         return jsonify({"files": []})
 
     files = os.listdir(user_folder)
+
+    # Filter out system files (user_profile.json)
+    files = [f for f in files if f != 'user_profile.json']
+
     return jsonify({"files": files})
 
 @app.route('/files/<filename>', methods=['GET'])
@@ -575,22 +579,31 @@ def get_user_profile():
 @app.route("/profile", methods=["POST"])
 @jwt_required()
 def save_user_profile():
-    """Saves the current user's profile JSON."""
+    """Saves the current user's profile JSON, merging with existing data."""
     user_id_str = get_jwt_identity()
     user = db.session.get(User, int(user_id_str))
     if not user:
         return jsonify({"error": "User not found"}), 404
-    
+
     profile_data = request.get_json()
     if not profile_data:
         return jsonify({"error": "No JSON data provided"}), 400
-    
+
     profile_path = _get_user_profile_path(user)
     try:
-        # Validate that it's at least valid JSON
-        # We trust the user to get the schema right, for now
+        # Read existing profile if it exists
+        existing_profile = {}
+        if profile_path.exists():
+            with open(profile_path, "r") as f:
+                existing_profile = json.load(f)
+
+        # Merge incoming data with existing data
+        # Incoming data takes precedence
+        merged_profile = {**existing_profile, **profile_data}
+
+        # Write the merged profile back
         with open(profile_path, "w") as f:
-            json.dump(profile_data, f, indent=2)
+            json.dump(merged_profile, f, indent=2)
         return jsonify({"message": "Profile saved successfully"}), 200
     except Exception as e:
         print(f"Error saving profile: {e}")

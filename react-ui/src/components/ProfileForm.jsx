@@ -4,6 +4,8 @@ import { getProfile, saveProfile } from '../services/api';
 export default function ProfileForm() {
   const [name, setName] = useState('');
   const [dob, setDob] = useState('');
+  const [gender, setGender] = useState('');
+  const [smokingStatus, setSmokingStatus] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -15,6 +17,8 @@ export default function ProfileForm() {
       .then(data => {
         setName(data.name || '');
         setDob(data.date_of_birth || '');
+        setGender(data.gender || '');
+        setSmokingStatus(data.smoking_status || '');
         setFullProfile(data); // Store the full object
       })
       .catch(err => {
@@ -35,14 +39,22 @@ export default function ProfileForm() {
     const updatedProfile = {
       ...fullProfile,
       name: name,
-      date_of_birth: dob
-      // Add other fields like gender, smoking_status here
+      date_of_birth: dob,
+      gender: gender,
+      smoking_status: smokingStatus
     };
 
     try {
       const res = await saveProfile(updatedProfile);
       setMessage(res.message);
-      setFullProfile(updatedProfile); // Keep our state in sync
+
+      // Refetch profile to get the merged data from backend
+      const refreshedProfile = await getProfile();
+      setFullProfile(refreshedProfile);
+      setName(refreshedProfile.name || '');
+      setDob(refreshedProfile.date_of_birth || '');
+      setGender(refreshedProfile.gender || '');
+      setSmokingStatus(refreshedProfile.smoking_status || '');
     } catch (e) {
       setError(e.message);
     } finally {
@@ -75,7 +87,38 @@ export default function ProfileForm() {
             onChange={e => setDob(e.target.value)}
           />
         </div>
-        
+
+        <div className="form-group" style={{ marginTop: '10px' }}>
+          <label htmlFor="gender" style={{ marginBottom: '4px', fontSize: '14px' }}>Gender</label>
+          <select
+            id="gender"
+            className="form-input"
+            value={gender}
+            onChange={e => setGender(e.target.value)}
+          >
+            <option value="">Select gender</option>
+            <option value="male">Male</option>
+            <option value="female">Female</option>
+            {/* <option value="other">Other</option>
+            <option value="prefer_not_to_say">Prefer not to say</option> */}
+          </select>
+        </div>
+
+        <div className="form-group" style={{ marginTop: '10px' }}>
+          <label htmlFor="smokingStatus" style={{ marginBottom: '4px', fontSize: '14px' }}>Smoking Status</label>
+          <select
+            id="smokingStatus"
+            className="form-input"
+            value={smokingStatus}
+            onChange={e => setSmokingStatus(e.target.value)}
+          >
+            <option value="">Select smoking status</option>
+            <option value="non-smoker">Non-smoker</option>
+            <option value="smoker">Smoker</option>
+            <option value="ex-smoker">Ex-smoker</option>
+          </select>
+        </div>
+
         <button 
           type="submit" 
           className="btn primary" 
