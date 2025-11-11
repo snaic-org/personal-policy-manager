@@ -141,7 +141,9 @@ export default function Chat({ onUploadSuccess }) {
         {loading && history.length === 0 && (
           <div className="empty-state">Loading history...</div>
         )}
-        {history.map((m, i) => (
+        {history.map((m, i) => {
+          const header = m.role === 'user' ? 'You' : (m.role === 'insurer' ? 'Insurer' : 'Bot');
+          return (
           <div key={i} className={`message ${m.role}`}>
             <div className="message-header">{m.role === 'user' ? 'You' : 'Bot'}</div>
             <div className="message-content">
@@ -162,7 +164,8 @@ export default function Chat({ onUploadSuccess }) {
               }
             </div>
           </div>
-        ))}
+        );
+        })}
         <div ref={messagesEndRef} />
       </div>
 

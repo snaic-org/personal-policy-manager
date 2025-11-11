@@ -1,27 +1,31 @@
 import React, { useState, useEffect } from 'react';
 import * as api from '../../services/api';
+import FileDropzone from '../FileDropzone';
+import FileDisplayList from '../FileDisplayList'; // <-- Import the new list component
 
-// Re-using file list styles from existing components
 export default function CustomerDocuments({ customerId }) {
+  // State for the file list
   const [files, setFiles] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  
-  // For upload
+  const [listLoading, setListLoading] = useState(true);
+  const [listError, setListError] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // State for the new upload
   const [uploadFiles, setUploadFiles] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadMessage, setUploadMessage] = useState('');
+  const [uploadError, setUploadError] = useState(null);
 
   const fetchFiles = async () => {
-    setLoading(true);
-    setError(null);
+    setListLoading(true);
+    setListError(null);
     try {
       const res = await api.getInsurerCustomerFiles(customerId);
       setFiles(res.files || []);
     } catch (err) {
-      setError(err.message);
+      setListError(err.message);
     } finally {
-      setLoading(false);
+      setListLoading(false);
     }
   };
 
@@ -29,82 +33,94 @@ export default function CustomerDocuments({ customerId }) {
     fetchFiles();
   }, [customerId]);
 
-  const handleFileChange = (e) => {
-    setUploadFiles(Array.from(e.target.files));
+  // --- Upload Handlers ---
+  const handleFilesSelected = (selected) => {
+    setUploadFiles(selected);
+    setUploadMessage('');
+    setUploadError(null);
   };
 
   const handleUpload = async () => {
     if (uploadFiles.length === 0) return;
     setIsUploading(true);
-    setError(null);
+    setUploadError(null);
     setUploadMessage('');
     try {
       const res = await api.uploadForCustomer(customerId, uploadFiles);
       setUploadMessage(res.message);
-      setUploadFiles([]); // Clear selection
+      setUploadFiles([]);
       fetchFiles(); // Refresh file list
     } catch (err) {
-      setError(err.message);
+      setUploadError(err.message);
     } finally {
       setIsUploading(false);
     }
   };
 
-  const handleDelete = async (filename) => {
-    if (!window.confirm(`Delete ${filename}?`)) return;
-    setLoading(true);
-    setError(null);
+  // --- List Handlers (passed to FileDisplayList) ---
+  const handleListDelete = async (filesToDelete) => {
+    if (filesToDelete.length === 0) return;
+    if (!window.confirm(`Delete ${filesToDelete.length} file(s) for this customer?`)) return;
+    
+    setIsDeleting(true);
+    setListError(null);
     try {
-      await api.deleteForCustomer(customerId, [filename]);
+      await api.deleteForCustomer(customerId, filesToDelete);
       fetchFiles(); // Refresh file list
     } catch (err) {
-      setError(err.message);
+      setListError(err.message);
     } finally {
-      setLoading(false);
+      setIsDeleting(false);
     }
+  };
+
+  const handleListDownload = async (filename) => {
+    // Assuming an API function exists. If not, this can be removed.
+    // For now, it just logs to the console.
+    console.log('Download requested for:', customerId, filename);
+    setListError('Download is not implemented for customer files yet.');
+    // try {
+    //   await api.downloadForCustomer(customerId, filename);
+    // } catch (err) {
+    //   setListError(err.message);
+    // }
   };
 
   return (
     <div style={{ padding: '20px', overflowY: 'auto', height: '100%' }}>
+      
+      {/* --- UPLOAD SECTION --- */}
       <div className="upload-container" style={{ marginBottom: '24px' }}>
         <h4>Upload Policies for Customer</h4>
-        <input
-          type="file"
-          multiple
-          onChange={handleFileChange}
-          accept=".pdf,.docx,.txt,.md"
-          style={{ display: 'block', marginBottom: '10px' }}
+        
+        <FileDropzone
+          id="customer-file-input"
+          onFilesSelected={handleFilesSelected}
+          selectedFiles={uploadFiles}
         />
-        <button className="btn primary" onClick={handleUpload} disabled={isUploading || uploadFiles.length === 0}>
-          {isUploading ? 'Uploading...' : `Upload ${uploadFiles.length} File(s)`}
-        </button>
+
+        {uploadFiles.length > 0 && (
+          <button className="btn primary" onClick={handleUpload} disabled={isUploading} style={{ width: '100%', marginTop: '10px' }}>
+            {isUploading ? 'Uploading...' : `Upload ${uploadFiles.length} File(s)`}
+          </button>
+        )}
+
+        {uploadError && <p className="form-error" style={{ margin: '10px 0 0' }}>{uploadError}</p>}
         {uploadMessage && <p className="form-message" style={{ margin: '10px 0 0' }}>{uploadMessage}</p>}
       </div>
 
-      <div className="file-list-container" style={{ borderTop: '1px solid #e0e0e0', paddingTop: '16px' }}>
-        <h4>Uploaded Files for Customer</h4>
-        {loading && <p>Loading...</p>}
-        {error && <p className="form-error">{error}</p>}
-        
-        {!loading && files.length === 0 ? (
-          <p>No files uploaded for this customer.</p>
-        ) : (
-          <ul className="file-list">
-            {files.map((file, i) => (
-              <li key={i} className="file-list-item">
-                <span className="file-name" title={file}>{file}</span>
-                <button
-                  className="file-delete-btn"
-                  onClick={() => handleDelete(file)}
-                  title={`Delete ${file}`}
-                  style={{ background: '#fbebee', color: 'var(--danger-color)', border: '1px solid var(--danger-color)', borderRadius: '4px', padding: '4px 8px' }}
-                >
-                  Delete
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+      {/* --- FILE LIST SECTION --- */}
+      <div style={{ borderTop: '1px solid #e0e0e0', paddingTop: '16px' }}>
+        <FileDisplayList
+          title="Uploaded Files for Customer"
+          files={files}
+          loading={listLoading}
+          error={listError}
+          isDeleting={isDeleting}
+          emptyListMessage="No files uploaded for this customer."
+          onDelete={handleListDelete}
+          onDownload={handleListDownload}
+        />
       </div>
     </div>
   );
