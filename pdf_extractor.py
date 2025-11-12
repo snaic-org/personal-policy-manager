@@ -50,7 +50,27 @@ def table_to_markdown(table):
     return "\n".join(lines)
 
 
-def split_pdf(pdf_path, chunk_size=15):
+def get_text_spans_from_table(table):
+    """Get all text spans that are part of a table."""
+    spans = []
+    for cell in table.cells:
+        if cell.spans:
+            for span in cell.spans:
+                spans.append((span.offset, span.offset + span.length))
+    return spans
+
+
+def is_text_in_table(text_span, table_spans):
+    """Check if a text span overlaps with any table span."""
+    text_start, text_end = text_span
+    for table_start, table_end in table_spans:
+        # Check for overlap
+        if not (text_end <= table_start or text_start >= table_end):
+            return True
+    return False
+
+
+def split_pdf(pdf_path, chunk_size=2):
     """Split PDF into chunks to avoid page limits."""
     doc = fitz.open(pdf_path)
     total_pages = len(doc)
@@ -105,10 +125,8 @@ def read_pdf_with_azure(file_path, endpoint, key, use_chunking=True):
     )
 
     try:
-        if use_chunking and original_page_count > 15:
-            print(
-                f"[INFO] Splitting PDF into chunks (15 pages each) to avoid Free tier limits..."
-            )
+        if use_chunking and original_page_count > 2:
+            print(f"[INFO] Splitting PDF into chunks (2 pages each) for Free tier...")
             chunks = split_pdf(pdf_path, chunk_size=2)
             print(f"[INFO] Created {len(chunks)} chunks")
 
@@ -127,6 +145,11 @@ def read_pdf_with_azure(file_path, endpoint, key, use_chunking=True):
 
                 result = poller.result()
 
+                # Get all table spans for this chunk
+                all_table_spans = []
+                for table in result.tables:
+                    all_table_spans.extend(get_text_spans_from_table(table))
+
                 # Process each page in this chunk
                 for page_num in range(len(result.pages)):
                     actual_page_num = page_offset + page_num + 1
@@ -144,32 +167,46 @@ def read_pdf_with_azure(file_path, endpoint, key, use_chunking=True):
                         )
                     ]
 
+                    # Extract tables
                     if tables_on_page:
                         print(f"Found {len(tables_on_page)} table(s) on this page\n")
 
                         for i, table in enumerate(tables_on_page, 1):
-                            print(f"Table {i}:")
+                            print(f"**Table {i}:**")
                             markdown_table = table_to_markdown(table)
                             print(markdown_table)
                             print()
-                    else:
-                        # No tables, extract text
-                        paragraphs_on_page = [
-                            para
-                            for para in result.paragraphs
-                            if para.bounding_regions[0].page_number == page_num + 1
-                        ]
 
-                        if paragraphs_on_page:
-                            text_parts = [para.content for para in paragraphs_on_page]
-                            text = "\n".join(text_parts)
-                            text = _clean_text(text)
-                            print(text)
+                    # ALWAYS extract text outside of tables
+                    paragraphs_on_page = [
+                        para
+                        for para in result.paragraphs
+                        if para.bounding_regions[0].page_number == page_num + 1
+                    ]
+
+                    # Filter out paragraphs that are inside tables
+                    non_table_paragraphs = []
+                    for para in paragraphs_on_page:
+                        if para.spans:
+                            para_span = (
+                                para.spans[0].offset,
+                                para.spans[0].offset + para.spans[0].length,
+                            )
+                            if not is_text_in_table(para_span, all_table_spans):
+                                non_table_paragraphs.append(para)
+
+                    if non_table_paragraphs:
+                        print("**Additional text (footnotes, headers, etc.):**")
+                        text_parts = [para.content for para in non_table_paragraphs]
+                        text = "\n".join(text_parts)
+                        text = _clean_text(text)
+                        print(text)
+                        print()
 
                 page_offset += len(result.pages)
 
         else:
-            # Process entire PDF at once
+            # Process entire PDF at once (for small PDFs)
             print("Uploading to Azure Document Intelligence...")
 
             with open(pdf_path, "rb") as f:
@@ -184,6 +221,11 @@ def read_pdf_with_azure(file_path, endpoint, key, use_chunking=True):
             result = poller.result()
 
             print(f"Successfully analyzed. Document has {len(result.pages)} pages.")
+
+            # Get all table spans
+            all_table_spans = []
+            for table in result.tables:
+                all_table_spans.extend(get_text_spans_from_table(table))
 
             # Process each page
             for page_num in range(len(result.pages)):
@@ -205,23 +247,34 @@ def read_pdf_with_azure(file_path, endpoint, key, use_chunking=True):
                     print(f"Found {len(tables_on_page)} table(s) on this page\n")
 
                     for i, table in enumerate(tables_on_page, 1):
-                        print(f"Table {i}:")
+                        print(f"**Table {i}:**")
                         markdown_table = table_to_markdown(table)
                         print(markdown_table)
                         print()
-                else:
-                    # No tables, extract text
-                    paragraphs_on_page = [
-                        para
-                        for para in result.paragraphs
-                        if para.bounding_regions[0].page_number == page_num + 1
-                    ]
 
-                    if paragraphs_on_page:
-                        text_parts = [para.content for para in paragraphs_on_page]
-                        text = "\n".join(text_parts)
-                        text = _clean_text(text)
-                        print(text)
+                # Extract text outside tables
+                paragraphs_on_page = [
+                    para
+                    for para in result.paragraphs
+                    if para.bounding_regions[0].page_number == page_num + 1
+                ]
+
+                non_table_paragraphs = []
+                for para in paragraphs_on_page:
+                    if para.spans:
+                        para_span = (
+                            para.spans[0].offset,
+                            para.spans[0].offset + para.spans[0].length,
+                        )
+                        if not is_text_in_table(para_span, all_table_spans):
+                            non_table_paragraphs.append(para)
+
+                if non_table_paragraphs:
+                    print("**Additional text:**")
+                    text_parts = [para.content for para in non_table_paragraphs]
+                    text = "\n".join(text_parts)
+                    text = _clean_text(text)
+                    print(text)
 
         print(f"\n--- Finished reading {file_path} ---")
 
@@ -242,6 +295,6 @@ if __name__ == "__main__":
 
     if len(sys.argv) < 2:
         print("Error: You must provide a file path as an argument.")
-        print("Example: python data_ingestion.py /path/to/your/file.pdf")
+        print("Example: python pdf_extractor.py /path/to/your/file.pdf")
     else:
         read_pdf_with_azure(sys.argv[1], AZURE_ENDPOINT, AZURE_KEY, use_chunking=True)
