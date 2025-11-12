@@ -800,6 +800,44 @@ def upload_for_customer(customer_id):
         
         if not saved_files:
             return jsonify({"error": "No valid files were saved. Check filenames."}), 400
+        
+        # --- Update user_profile.json ---
+        try:
+            profile_path = _get_user_profile_path(customer)
+            
+            existing_profile = {}
+            if profile_path.exists():
+                try:
+                    with open(profile_path, "r") as f:
+                        existing_profile = json.load(f)
+                except json.JSONDecodeError:
+                    existing_profile = {} # Handle empty or corrupted file
+
+            # Get the insurance_policies object, or create a new one
+            insurance_policies = existing_profile.get("insurance_policies", {})
+            
+            new_policies_added = False
+            for filename in processed_filenames:
+                if filename not in insurance_policies:
+                    # Add a new stub using the filename as the key
+                    insurance_policies[filename] = {
+                        "policy_type": "Health", # Default
+                        "insurer": "Unknown",
+                        "plan_name": "Unknown (Uploaded by Insurer)",
+                        "underwriting": {} # This is the key for the underwriting tab
+                    }
+                    new_policies_added = True
+
+            # If we added new policies, update the profile and save the file
+            if new_policies_added:
+                existing_profile["insurance_policies"] = insurance_policies
+                with open(profile_path, "w") as f:
+                    json.dump(existing_profile, f, indent=2)
+                
+        except Exception as e:
+            print(f"Error updating user profile during upload: {e}")
+            print(traceback.format_exc())
+            # Don't fail the whole upload, but log it
 
         print(f"Processing batch '{batch_id}' with {len(saved_files)} files...")
         
