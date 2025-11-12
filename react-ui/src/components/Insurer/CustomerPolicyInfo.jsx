@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { getProfile, saveProfile, getUserFiles } from '../services/api';
+import React, { useState, useEffect } from 'react';
 
 // Define policy types for the dropdown
 const POLICY_TYPES = [
@@ -10,65 +9,48 @@ const POLICY_TYPES = [
   "Other"
 ];
 
-export default function PolicyInfo({ refreshTrigger }) {
-  const [profile, setProfile] = useState({});
+/**
+ * This is a copy of the customer-facing PolicyInfo,
+ * adapted for the insurer to edit a customer's policy details.
+ */
+export default function CustomerPolicyInfo({ customerId, initialProfile, customerFiles, onSave }) {
   // This state will hold the 'insurance_policies' object
   const [localPolicies, setLocalPolicies] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
-  // Fetches all data needed
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [profileData, filesData] = await Promise.all([
-        getProfile(),
-        getUserFiles()
-      ]);
-      
-      const files = filesData.files || [];
-      const policiesFromProfile = profileData.insurance_policies || {};
-      
-      // Create an initialized object for our local state
-      // This ensures that every file in 'files' has an entry
-      // in 'localPolicies', creating a default one if it doesn't exist.
-      
-      // This ensures all policies have a default structure, including `riders: []`,
-      // even if the loaded profile data is missing it.
-      const defaultPolicyStructure = {
-        policy_type: "",
-        insurer: "",
-        plan_name: "",
-        tier: "",
-        riders: []
-      };
+  // Stores the full profile to avoid overwriting other data
+  const [fullProfile, setFullProfile] = useState(initialProfile || {});
 
-      const initializedPolicies = {};
-      for (const filename of files) {
-        initializedPolicies[filename] = {
-          ...defaultPolicyStructure, // Start with defaults
-          ...(policiesFromProfile[filename] || {}) // Override with loaded data
-        };
-      }
-      
-      setProfile(profileData);
-      setLocalPolicies(initializedPolicies);
-      
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
+  // Load data from props
   useEffect(() => {
-    fetchData();
-  }, [fetchData, refreshTrigger]); // Refetch when files change
+    const policiesFromProfile = initialProfile.insurance_policies || {};
+    const files = customerFiles || [];
+    setFullProfile(initialProfile);
+
+    // This ensures all policies have a default structure, including `riders: []`,
+    const defaultPolicyStructure = {
+      policy_type: "",
+      insurer: "",
+      plan_name: "",
+      tier: "",
+      riders: []
+    };
+
+    const initializedPolicies = {};
+    for (const filename of files) {
+      initializedPolicies[filename] = {
+        ...defaultPolicyStructure,
+        ...(policiesFromProfile[filename] || {})
+      };
+    }
+    setLocalPolicies(initializedPolicies);
+
+  }, [initialProfile, customerFiles]);
 
   // --- Event Handlers ---
 
-  // Handles changes for top-level policy fields
   const handlePolicyChange = (filename, field, value) => {
     setLocalPolicies(prevPolicies => ({
       ...prevPolicies,
@@ -79,16 +61,13 @@ export default function PolicyInfo({ refreshTrigger }) {
     }));
   };
 
-  // Handles changes for fields inside a rider
   const handleRiderChange = (filename, riderIndex, field, value) => {
     setLocalPolicies(prevPolicies => {
-      // --- FIX: Add safety check for undefined riders ---
       const updatedRiders = [...(prevPolicies[filename].riders || [])];
       updatedRiders[riderIndex] = {
         ...updatedRiders[riderIndex],
         [field]: value
       };
-      
       return {
         ...prevPolicies,
         [filename]: {
@@ -99,28 +78,24 @@ export default function PolicyInfo({ refreshTrigger }) {
     });
   };
 
-  // Adds a new, empty rider to a policy
   const handleAddRider = (filename) => {
     setLocalPolicies(prevPolicies => ({
       ...prevPolicies,
       [filename]: {
         ...prevPolicies[filename],
-        // --- FIX: Add safety check for undefined riders ---
         riders: [
           ...(prevPolicies[filename].riders || []),
-          { plan_name: "", tier: "" } // New empty rider
+          { plan_name: "", tier: "" }
         ]
       }
     }));
   };
 
-  // Removes a rider by its index
   const handleRemoveRider = (filename, riderIndex) => {
     setLocalPolicies(prevPolicies => ({
       ...prevPolicies,
       [filename]: {
         ...prevPolicies[filename],
-        // --- FIX: Add safety check for undefined riders ---
         riders: (prevPolicies[filename].riders || []).filter((_, index) => index !== riderIndex)
       }
     }));
@@ -133,37 +108,43 @@ export default function PolicyInfo({ refreshTrigger }) {
     setMessage('');
 
     // Merge new localPolicies into the full profile object
-    const updatedProfile = {
-      ...profile,
-      insurance_policies: localPolicies
-    };
-
-    try {
-      const res = await saveProfile(updatedProfile);
-      setMessage(res.message);
-      // Refetch all data to get the merged profile from backend
-      await fetchData();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
+    // IMPORTANT: Also merge any existing underwriting data to prevent overwriting it
+    const mergedPolicies = { ...fullProfile.insurance_policies };
+    for (const filename in localPolicies) {
+      mergedPolicies[filename] = {
+        ...(mergedPolicies[filename] || {}), // Keep existing data (like underwriting)
+        ...localPolicies[filename] // Overwrite with new form data
+      };
     }
+
+    const updatedProfile = {
+      ...fullProfile,
+      insurance_policies: mergedPolicies
+    };
+    
+    // Call the onSave function passed from the parent tab
+    const result = await onSave(updatedProfile);
+
+    if (result.success) {
+      setMessage("Policy details saved successfully.");
+      // The parent (CustomerProfileTab) will refetch and pass new props,
+      // which will re-trigger the useEffect above to update the form.
+    } else {
+      setError(result.error || "Failed to save policy details.");
+    }
+    
+    setLoading(false);
   };
 
   const policyFiles = Object.keys(localPolicies);
 
   return (
     <div className="policy-tiers-container" style={{ paddingTop: '16px', borderTop: '1px solid #e0e0e0' }}>
-      <h4>Your Policy Details</h4>
-      <p style={{ fontSize: '13px', color: '#555', margin: '0 0 10px' }}>
-        Specify your policy details to get more personalized answers.
-      </p>
+      <h4>Customer Policy Details</h4>
       
-      {loading && !policyFiles.length && <p>Loading...</p>}
-      
-      {!loading && !policyFiles.length && (
+      {!policyFiles.length && (
         <p style={{ fontSize: '14px', color: '#777' }}>
-          Upload a policy document first.
+          Upload a policy document first in the "Documents" tab.
         </p>
       )}
 
@@ -274,7 +255,7 @@ export default function PolicyInfo({ refreshTrigger }) {
             disabled={loading}
             style={{ width: '100%', marginTop: '10px' }}
           >
-            {loading ? 'Saving...' : 'Save Policy Details'}
+            {loading ? 'Saving...' : 'Save All Policy Details'}
           </button>
         </div>
       )}

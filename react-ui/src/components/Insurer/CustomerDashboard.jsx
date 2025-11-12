@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import CustomerChat from './CustomerChat';
 import CustomerDocuments from './CustomerDocuments';
 import UnderwritingForm from './UnderwritingForm';
+import CustomerProfile from './CustomerProfile';
 
 // Simple tab styles
 const tabStyles = {
@@ -33,6 +34,8 @@ export default function CustomerDashboard({ customerId }) {
         return <CustomerDocuments customerId={customerId} />;
       case 'underwriting':
         return <UnderwritingForm customerId={customerId} />;
+      case 'profile':
+        return <CustomerProfile customerId={customerId} />;
       default:
         return null;
     }
@@ -49,6 +52,9 @@ export default function CustomerDashboard({ customerId }) {
         </button>
         <button style={tabButton(activeTab === 'underwriting')} onClick={() => setActiveTab('underwriting')}>
           Underwriting
+        </button>
+        <button style={tabButton(activeTab === 'profile')} onClick={() => setActiveTab('profile')}>
+          Profile
         </button>
       </div>
       
