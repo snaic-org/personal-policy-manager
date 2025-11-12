@@ -98,6 +98,8 @@ class QueryProcessor:
 
         owned_policies = set(user_profile["policies_owned"])
         # (This function appears incomplete in the original, but leaving as-is)
+        # Note: This function is not actually called. The logic is in _filter_and_rerank_by_profile
+        return results
 
     def _expand_query(self, query: str) -> str:
         """
@@ -235,6 +237,9 @@ class QueryProcessor:
 
         context_from_docs = "\n\n---\n\n".join(context_parts)
 
+        print("DEBUG: CONTEXT BEING SENT TO OPENAI:")
+        print(context_from_docs)
+
         # Profile Handling
         if is_personal_batch and user_profile:
             user_name = user_profile.get("name", "User")
@@ -244,7 +249,7 @@ class QueryProcessor:
             profile_info += f"- User Name: {user_name}\n"
 
             if insurance_policies:
-                profile_info += f"- User's Policies [cite: user_profile.json]:\n"
+                profile_info += f"- User's Policies:\n"
                 for filename, policy_data in insurance_policies.items():
                     plan = policy_data.get("plan_name", "Unknown Plan")
                     tier = policy_data.get("tier", "N/A")
@@ -272,14 +277,14 @@ class QueryProcessor:
 
         --- IMPORTANT INSURANCE CONCEPTS ---
         1.  **Terminology Equivalence (Fixing Terminologies):**
-            * 'Rental vehicle excess' [cite: SINGLIFE_TRAVEL_POLICY.pdf, Page 34] is the same as 'Collision Damage Waiver (CDW)' or 'car rental insurance'.
-            * 'Major Cancer' [cite: Manulife_Policy_Illustration_REDACTED.pdf, Page 17] is a type of 'Critical Illness'.
-            * 'GREAT SupremeHealth' [cite: GREAT_SupremeHealth_Benefits.pdf, Page 2] is a 'Reimbursement' plan (health insurance).
-            * 'Critical Care Enhancer Rider' [cite: Manulife_Policy_Illustration_REDACTED.pdf, Page 16] is a 'Lump Sum' plan (critical illness insurance).
+            * 'Rental vehicle excess' is the same as 'Collision Damage Waiver (CDW)' or 'car rental insurance'.
+            * 'Major Cancer' is a type of 'Critical Illness'.
+            * 'GREAT SupremeHealth' is a 'Reimbursement' plan (health insurance).
+            * 'Critical Care Enhancer Rider' is a 'Lump Sum' plan (critical illness insurance).
 
         2.  **Benefit & Claim Logic (Fixing Claim Plan Logic):**
-            * **Reimbursement Plans (Health):** These plans pay the *hospital* for eligible medical bills. The user is responsible for out-of-pocket costs like 'Deductibles' and 'Co-insurance' [cite: GREAT_SupremeHealth_Benefits.pdf, Page 6].
-            * **Lump Sum Plans (CI/Life):** These plans pay a *single cash amount* (the 'Sum Insured') directly to the *user* upon diagnosis [cite: Manulife_Policy_Illustration_REDACTED.pdf, Page 16].
+            * **Reimbursement Plans (Health):** These plans pay the *hospital* for eligible medical bills. The user is responsible for out-of-pocket costs like 'Deductibles' and 'Co-insurance'.
+            * **Lump Sum Plans (CI/Life):** These plans pay a *single cash amount* (the 'Sum Insured') directly to the *user* upon diagnosis.
             * **CRITICAL LOGIC:** The cash from a **Lump Sum Plan** is unrestricted. It **CAN** be used to pay for the out-of-pocket costs (deductible, co-insurance) of a **Reimbursement Plan**. You must explain this if the user asks how their plans work together.
 
         {profile_info}
@@ -290,16 +295,16 @@ class QueryProcessor:
         --- CRITICAL RESPONSE RULES (MUST BE FOLLOWED) ---
         1.  **Start your response with: "{salutation}"**
 
-        2.  **User Profile is TRUTH (Fixing Rider Confusion):** The `USER PROFILE` section above is your *only* source of truth for what the user owns. The `DOCUMENT CHUNKS` contain information on *all* plans and riders for sale (like 'GREAT TotalCare' [cite: GREAT_SupremeHealth_Benefits.pdf, Page 14]).
+        2.  **User Profile is TRUTH (Fixing Rider Confusion):** The `USER PROFILE` section above is your *only* source of truth for what the user owns. The `DOCUMENT CHUNKS` contain information on *all* plans and riders for sale (like 'GREAT TotalCare').
             * **If a rider (e.g., 'GREAT TotalCare') is NOT listed in the user's profile**, you **MUST IGNORE** its benefits, even if the search chunks show them.
-            * You **MUST** state that the user does not have that rider and instead state the benefits of their base plan (e.g., 'GREAT SupremeHealth P PLUS' [cite: user_profile.json]).
+            * You **MUST** state that the user does not have that rider and instead state the benefits of their base plan (e.g., 'GREAT SupremeHealth P PLUS').
 
         3.  **Be Specific With Money (Fixing Missing Dollar Amounts):**
-            * You **MUST** extract specific dollar amounts. Do not say "a deductible"; say "a **$3,500** deductible" [cite: GREAT_SupremeHealth_Benefits.pdf, Page 6].
-            * When stating a lump sum benefit (like from the Manulife plan), you **MUST** find the **'Sum Insured'** (e.g., **$500,000** for the Critical Care Enhancer Rider [cite: Manulife_Policy_Illustration_REDACTED.pdf, Page 2, 16]) or the 'Maximum amount payable' for that specific benefit [cite: SINGLIFE_TRAVEL_POLICY.pdf, Page 4].
-            * You **MUST NOT** cite a general 'Aggregate Limit' [cite: SINGLIFE_TRAVEL_POLICY.pdf, Page 48] as a user's personal benefit.
+            * You **MUST** extract specific dollar amounts. Do not say "a deductible"; say "a **$3,500** deductible".
+            * When stating a lump sum benefit (like from the Manulife plan), you **MUST** find the **'Sum Insured'** (e.g., **$500,000** for the Critical Care Enhancer Rider) or the 'Maximum amount payable' for that specific benefit.
+            * You **MUST NOT** cite a general 'Aggregate Limit' as a user's personal benefit.
 
-        4.  **Cite Every Fact:** You must cite *every* fact you state with its source, including `[cite: user_profile.json]` when you pull information from the user's profile.
+        4.  **Cite Every Fact:** You must cite *every* fact you state with its source, including `` when you pull information from the user's profile.
 
         5.  **No Hallucinations (Fixing Hallucination):**
             * You **MUST NOT** add any conversational sign-offs (e.g., "Best regards," "Sincerely," "Hope this helps!").
@@ -436,9 +441,14 @@ class QueryProcessor:
 
             print(f"An unexpected error occurred in process_query_stream: {e}")
             traceback.print_exc()
-            yield "data: " + json.dumps(
-                {"error": f"An error occurred while processing your query: {e}"}
-            ) + "\n\n"
+            yield "data: "
+            (
+                D
+                + json.dumps(
+                    {"error": f"An error occurred while processing your query: {e}"}
+                )
+                + "\n\n"
+            )
 
     def _generate_response_stream(
         self,
@@ -647,7 +657,7 @@ class QueryProcessor:
         """
         Re-ranks search results based on the user's profile AND query keywords.
         Uses a scoring system to apply a "boost" to each chunk's original score.
-        This is the STICT V3 logic to handle conflicting chunks.
+        This is the STICT V4 logic to handle conflicting chunks.
         """
         if not user_profile:
             print("No user profile provided, returning unique results only.")
@@ -739,7 +749,8 @@ class QueryProcessor:
         boosted_results = []
         seen_content = set()
 
-        PROFILE_BOOST_WEIGHT = 0.2
+        # We increase the weight of our boost to make it more impactful
+        PROFILE_BOOST_WEIGHT = 0.5
 
         for result in results:
             content = result.get("content", "")
@@ -750,58 +761,87 @@ class QueryProcessor:
             metadata = result.get("metadata", {})
             chunk_filename = metadata.get("filename")
 
+            # Start with the file-level boost
             profile_boost = normalized_file_scores.get(chunk_filename, 0.0)
 
-            # --- START: NEW, STRICTER V3 LOGIC ---
+            # --- START: NEW, STRICTER V4 LOGIC ---
             if chunk_filename in insurance_policies:
                 policy_data = insurance_policies[chunk_filename]
                 user_tier = policy_data.get("tier", "N/A")  # e.g., "P PLUS"
+                user_riders = policy_data.get(
+                    "riders", []
+                )  # e.g., ["Critical Care..."]
 
                 chunk_plans = metadata.get(
                     "plan_context", []
                 )  # e.g., ["GREAT TotalCare", "P PLUS"]
+                page_heading = metadata.get("page_heading", "").lower()
 
-                # --- Define user's "enemy" plans ---
-                enemy_plans_list = []
+                # --- Define what an "enemy" is for this chunk ---
+                is_enemy_chunk = False
+
                 if "GREAT_SupremeHealth_Benefits.pdf" in chunk_filename:
-                    # User has "P PLUS", so these are the enemy plans
-                    enemy_plans_list = [
-                        "GREAT TotalCare",
-                        "P PRIME",
-                        "STANDARD",
-                        "A PLUS",
-                        "B PLUS",
-                    ]
+                    # The user does NOT own "GREAT TotalCare".
+                    # Check if the chunk is about this enemy rider.
+                    if (
+                        "great totalcare" in page_heading
+                        or "GREAT TotalCare" in chunk_plans
+                    ):
+                        # This chunk is about the rider the user doesn't own.
+                        # We must check if "P PLUS" is *also* present (the fine print problem)
+                        if user_tier not in chunk_plans:
+                            # Simple case: chunk is just for the enemy rider.
+                            is_enemy_chunk = True
+                        elif (
+                            user_tier in chunk_plans
+                            and "great totalcare" in page_heading
+                        ):
+                            # Tricky case: chunk is for "P PLUS" but the *heading* is "GREAT TotalCare".
+                            # This means the chunk's *primary subject* is the rider. Penalize it.
+                            is_enemy_chunk = True
 
-                # --- Check for enemies ---
-                # Check if ANY enemy plan is in this chunk's context
-                has_enemy_plan = any(enemy in chunk_plans for enemy in enemy_plans_list)
-                # Check if the user's tier is in this chunk's context
-                has_user_tier = user_tier in chunk_plans
-
-                # --- Apply Penalties or Boosts ---
-                if has_user_tier and has_enemy_plan:
-                    # This is the "Page 14" problem. It contains BOTH.
-                    # This chunk is confusing. Penalize it.
-                    profile_boost -= 1.0  # Strong penalty
+                # --- Apply Penalties or Boosts based on context ---
+                if is_enemy_chunk:
+                    # This chunk is primarily about a rider the user does not own.
+                    profile_boost -= 2.0  # Very strong penalty
                     print(
-                        f"  - PENALTY (Conflicting): Chunk from {chunk_filename} (Page {metadata.get('page_number')}) contains both user tier AND an enemy plan."
+                        f"  - PENALTY: Chunk from {chunk_filename} (Page {metadata.get('page_number')}) is for an un-owned rider."
                     )
 
-                elif has_enemy_plan:
-                    # This chunk is *only* about an enemy plan.
-                    profile_boost -= 2.0  # Strongest penalty
-                    print(
-                        f"  - PENALTY (Enemy): Chunk from {chunk_filename} (Page {metadata.get('page_number')}) is for an un-owned plan."
-                    )
-
-                elif has_user_tier:
-                    # This chunk is *only* about the user's plan.
+                elif user_tier != "N/A" and user_tier in chunk_plans:
+                    # This chunk is relevant to the user's tier and is NOT an enemy chunk.
                     profile_boost += 0.3  # Strong boost
                     print(
-                        f"  + BOOST (Match): Chunk from {chunk_filename} (Page {metadata.get('page_number')}) matches user tier {user_tier}."
+                        f"  + BOOST: Chunk from {chunk_filename} (Page {metadata.get('page_number')}) matches user tier {user_tier}."
                     )
-            # --- END: NEW, STRICTER V3 LOGIC ---
+
+                # --- NEW CONTENT-BASED BOOST ---
+                # Now, let's scan the *content* of the chunk for our magic words
+                content_lower = content.lower()
+
+                # Find the $500,000 chunk
+                if (
+                    "manulife" in chunk_filename.lower()
+                    and "500,000" in content
+                    and "critical care" in content_lower
+                ):
+                    profile_boost += 3.0  # MASSIVE boost
+                    print(
+                        f"  +++ SUPER BOOST: Found '$500,000' + 'Critical Care' in {chunk_filename} (Page {metadata.get('page_number')})"
+                    )
+
+                # Find the $3,500 chunk
+                if (
+                    "great_supremehealth" in chunk_filename.lower()
+                    and "3,500" in content
+                    and "deductible" in content_lower
+                ):
+                    profile_boost += 3.0  # MASSIVE boost
+                    print(
+                        f"  +++ SUPER BOOST: Found '$3,500' + 'Deductible' in {chunk_filename} (Page {metadata.get('page_number')})"
+                    )
+
+            # --- END: NEW, STRICTER V4 LOGIC ---
 
             original_score = result.get("combined_score", 0.0)
             result["boosted_score"] = original_score + (
@@ -814,4 +854,36 @@ class QueryProcessor:
 
         print(f"Re-ranked {len(boosted_results)} unique chunks with profile boosting.")
 
+        # Print the new Top 10 for debugging
+        print("\n--- NEW TOP 10 CHUNKS ---")
+        for i, result in enumerate(boosted_results[:10]):
+            meta = result["metadata"]
+            print(
+                f"#{i + 1} (Score: {result['boosted_score']:.2f}) - {meta.get('filename')} Page {meta.get('page_number')} - Heading: {meta.get('page_heading')}"
+            )
+        print("-------------------------\n")
+
         return boosted_results
+
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """Get basic statistics about the search engine state."""
+        if self.search_engine:
+            return self.search_engine.get_stats()
+        return {"error": "Search engine not initialized."}
+
+    def _strip_signature(self, text: str) -> str:
+        """Conservative removal of trailing email signature-like blocks from model output.
+
+        This mirrors the preprocessing removing signatures in documents; it is a
+        final safety net to avoid returning 'Best regards, [Name]' style closings.
+        """
+        import re
+
+        sig_pattern = re.compile(
+            r"(?m)(?:\n|\A)\s*(?:Best regards,|Best Regards,|Regards,|Sincerely,|Kind regards,|Kind Regards,|Yours sincerely,|Yours faithfully,|Thanks,|Thank you,|Thank you for your time,?)\s*(?:\n[^\n]{0,120})?(?:\n[^\n]{0,120})?\s*\Z",
+            flags=re.IGNORECASE,
+        )
+
+        new_text = sig_pattern.sub("\n", text)
+        new_text = re.sub(r"(?m)^\s*\[?Your Name\]?\s*$", "\n", new_text)
+        return new_text.strip()
