@@ -103,40 +103,53 @@ class QueryProcessor:
 
     def _expand_query(self, query: str) -> str:
         """
-        Expands the user query using intelligent LLM rewriting for insurance domain.
-        This version is more aggressive to find critical financial terms.
+        Expands the user query using intelligent LLM rewriting and a hardcoded
+        critical term map for the insurance domain.
         """
+
+        # --- START: NEW V2 EXPANSION LOGIC ---
+
+        # 1. Define hardcoded maps for critical, non-obvious terms.
+        # This map finds specific benefits.
+        CRITICAL_TERM_MAP = {
+            "angioplasty": "Angioplasty and Other Invasive Treatment",
+            "stem cell": "Stem Cell Transplant",
+            "pet": "Domestic Pet Care",
+            "cat": "Domestic Pet Care",
+            "dog": "Domestic Pet Care",
+            "pet hotel": "Domestic Pet Care",
+            "dental": "Accidental Dental Treatment",
+            "motorcycle": "motorcycling",
+            "motor bike": "motorcycling",
+        }
+
+        # This map adds broad keywords based on policy type.
+        POLICY_TYPE_KEYWORDS = {
+            "health": "deductible co-insurance out-of-pocket",
+            "ci": "sum insured critical care benefit limit",
+            "critical illness": "sum insured critical care benefit limit",
+            "manuprotect": "sum insured critical care benefit limit",
+            "supremehealth": "deductible co-insurance out-of-pocket",
+        }
+
+        added_keywords = set()
+        query_lower = query.lower()
+
+        # Add keywords from the critical term map
+        for term, expansion in CRITICAL_TERM_MAP.items():
+            if term in query_lower:
+                added_keywords.add(expansion)
+
+        # Add keywords from the policy type map
+        for term, expansion in POLICY_TYPE_KEYWORDS.items():
+            if term in query_lower:
+                added_keywords.update(expansion.split())
+
+        manual_expansion = " ".join(added_keywords)
+
+        # --- END: NEW V2 EXPANSION LOGIC ---
+
         try:
-            # --- START: NEW HARDCODED LOGIC ---
-            # Manually add critical keywords if the query mentions a policy type.
-            # This ensures the most important chunks (deductible, sum insured)
-            # are *always* retrieved by the initial search.
-            added_keywords = set()
-            query_lower = query.lower()
-
-            if (
-                "health plan" in query_lower
-                or "supremehealth" in query_lower
-                or "warded" in query_lower
-                or "surgery" in query_lower
-            ):
-                added_keywords.add("deductible")
-                added_keywords.add("co-insurance")
-                added_keywords.add("out-of-pocket")
-
-            if (
-                "ci" in query_lower
-                or "critical illness" in query_lower
-                or "manuprotect" in query_lower
-                or "cancer" in query_lower
-            ):
-                added_keywords.add("sum insured")
-                added_keywords.add("critical care enhancer")
-                added_keywords.add("benefit limit")
-
-            manual_expansion = " ".join(added_keywords)
-            # --- END: NEW HARDCODED LOGIC ---
-
             expansion_prompt = f"""
             You are an insurance domain expert. A user is asking: "{query}"
 
@@ -163,7 +176,7 @@ class QueryProcessor:
 
             llm_keywords = response.choices[0].message.content.strip()
 
-            # Combine all three
+            # Combine all three: Original Query + Manual Keywords + LLM Keywords
             expanded_query = f"{query} {manual_expansion} {llm_keywords}"
 
             print(f"Query intelligently expanded to: {expanded_query}")
@@ -171,7 +184,8 @@ class QueryProcessor:
 
         except Exception as e:
             print(f"Error during query expansion: {e}")
-            return query  # Fallback to original query
+            # Fallback to original query + manual expansion
+            return f"{query} {manual_expansion}"
 
     def process_query(
         self, query: str, batch_id: str = None, user_profile: Optional[Dict] = None
