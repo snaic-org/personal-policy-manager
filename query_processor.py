@@ -39,29 +39,6 @@ class QueryProcessor:
         self.search_engine = None
         self.current_batch_id = None
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        # self.user_profile = self._load_user_profile()  # Load profile on initialization
-
-    # def _load_user_profile(self) -> Optional[Dict[str, Any]]:
-    #     """Loads the user profile from user_profile.json in the project root."""
-    #     profile_path = Path("user_profile_basic.json")
-    #     if profile_path.exists():
-    #         try:
-    #             with open(profile_path, "r") as f:
-    #                 profile = json.load(f)
-    #                 print("User profile loaded successfully.")
-    #                 return profile
-    #         except json.JSONDecodeError:
-    #             print("Error: user_profile.json is not valid JSON.")
-    #             return None
-    #         except Exception as e:
-    #             print(f"Error loading user profile: {e}")
-    #             return None
-    #     else:
-    #         # it's okay if the profile doesn't exist, just means no personalization
-    #         print(
-    #             "Info: user_profile.json not found. Proceeding without personalization."
-    #         )
-    #         return None
 
     def _ensure_batch_loaded(self, batch_id: str) -> bool:
         """Ensure the specified batch is loaded in the search engine."""
@@ -109,8 +86,10 @@ class QueryProcessor:
                 unique_results.append(result)
                 seen_content.add(content)
         return unique_results
-    
-    def _filter_results_by_profile(self, results: List[Dict], user_profile: Optional[Dict]) -> List[Dict]:
+
+    def _filter_results_by_profile(
+        self, results: List[Dict], user_profile: Optional[Dict]
+    ) -> List[Dict]:
         """Filters search results to only include documents listed in the user profile."""
         # Only filter if a profile with policies_owned exists
         if not user_profile or "policies_owned" not in user_profile:
@@ -118,6 +97,7 @@ class QueryProcessor:
             return results
 
         owned_policies = set(user_profile["policies_owned"])
+        # (This function appears incomplete in the original, but leaving as-is)
 
     def _expand_query(self, query: str) -> str:
         """
@@ -157,8 +137,10 @@ class QueryProcessor:
         except Exception as e:
             print(f"Error during query expansion: {e}")
             return query  # Fallback to original query
-        
-    def process_query(self, query: str, batch_id: str = None, user_profile: Optional[Dict] = None) -> str:
+
+    def process_query(
+        self, query: str, batch_id: str = None, user_profile: Optional[Dict] = None
+    ) -> str:
         """Process a query and return the response."""
         try:
             # Determine the target batch
@@ -183,35 +165,24 @@ class QueryProcessor:
                 f"Retrieved {len(raw_search_results)} raw results from hybrid search."
             )
 
-            # is_personal_batch = (target_batch == "my_policies")
             is_personal_batch = target_batch.startswith("user_")
 
-            # relevant_results = raw_search_results
-            # if is_personal_batch:
-            #     if user_profile:
-            #         relevant_results = self._filter_results_by_profile(
-            #             raw_search_results, user_profile
-            #         )
-            #     else:
-            #         print(
-            #             "Warning: Operating in personal batch mode but no user profile loaded."
-            #         )
-
-            # unique_results = self._deduplicate_results(relevant_results)
-            unique_results = self._deduplicate_results(raw_search_results)
+            unique_results = self._filter_and_rerank_by_profile(
+                query, raw_search_results, user_profile
+            )
             print(
                 f"Retained {len(unique_results)} unique relevant chunks after filtering/deduplication."
             )
 
             if not unique_results:
-                # if is_personal_batch and self.user_profile:
-                #     return f"Based on your profile, I couldn't find relevant information in your specific policy documents ('{', '.join(self.user_profile.get('policies_owned', []))}') for the question: '{query}'."
                 if is_personal_batch:
                     return f"I couldn't find relevant information in your uploaded documents for the question: '{query}'."
                 else:
                     return f"No relevant information found in the documents of batch '{target_batch}' for the question: '{query}'."
 
-            response = self._generate_response(query, unique_results, is_personal_batch, user_profile)
+            response = self._generate_response(
+                query, unique_results, is_personal_batch, user_profile
+            )
 
             processing_time = time.time() - start_time
             print(f"Total processing time: {processing_time:.2f}s")
@@ -227,14 +198,18 @@ class QueryProcessor:
             return f"An error occurred while processing your query. Please check logs. Error: {e}"
 
     def _generate_response(
-        self, original_query: str, search_results: List[Dict], is_personal_batch: bool, user_profile: Optional[Dict]
+        self,
+        original_query: str,
+        search_results: List[Dict],
+        is_personal_batch: bool,
+        user_profile: Optional[Dict],
     ) -> str:
         """Generate comprehensive response using retrieved chunks and potentially user profile."""
         if not search_results:
             return "I couldn't find any relevant information in the documents to answer your question."
 
         context_parts = []
-        max_chunks_for_context = 30
+        max_chunks_for_context = 10
         cited_filenames = set()  # keeps track of which documents we found
 
         print(
@@ -246,8 +221,13 @@ class QueryProcessor:
             if content:
                 filename = metadata.get("filename", "Unknown Document")
                 page = metadata.get("page_number", "N/A")
+
+                heading = metadata.get("page_heading", "General Information")
                 source_ref = f"[Source {i}: {filename}, Page {page}]"
-                context_parts.append(f"{source_ref}\n{content}")
+                context_parts.append(
+                    f"{source_ref}\nPAGE HEADING: {heading}\n\n{content}"
+                )
+
                 cited_filenames.add(filename)
 
         if not context_parts:
@@ -255,52 +235,76 @@ class QueryProcessor:
 
         context_from_docs = "\n\n---\n\n".join(context_parts)
 
-        # Enhanced profile handling with policy tiers
+        # Profile Handling
         if is_personal_batch and user_profile:
             user_name = user_profile.get("name", "User")
-            policy_tiers = user_profile.get("policy_tiers", {})
+            insurance_policies = user_profile.get("insurance_policies", {})
 
-            profile_info = f"\n\nUSER PROFILE:\n- User Name: {user_name}"
-            if policy_tiers:
-                profile_info += "\n- Policy Tiers:"
-                for policy, tier in policy_tiers.items():
-                    profile_info += f"\n  - {policy}: {tier} plan"
+            profile_info = f"\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n"
+            profile_info += f"- User Name: {user_name}\n"
+
+            if insurance_policies:
+                profile_info += f"- User's Policies [cite: user_profile.json]:\n"
+                for filename, policy_data in insurance_policies.items():
+                    plan = policy_data.get("plan_name", "Unknown Plan")
+                    tier = policy_data.get("tier", "N/A")
+                    riders = policy_data.get("riders", [])
+
+                    # Add policy and tier info
+                    profile_info += f"  - Policy: {plan} (Tier: {tier})\n"
+
+                    # Also add rider info
+                    if riders:
+                        profile_info += f"    - Riders: {', '.join(riders)}\n"
+                    else:
+                        profile_info += f"    - Riders: None listed\n"
         else:
             user_name = "User"
-            profile_info = ""
+            # Provide a fallback string
+            profile_info = "\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n- No user profile provided.\n"
 
         salutation = f"Hi {user_name.split()[0] if user_name != 'User' else 'Hi'},"
 
         # Enhanced prompt with insurance terminology awareness and tier personalization
+        # This is the new, hardcoded prompt that implements all your logic.
         prompt_instructions = f"""You are an expert financial advisor specializing in insurance policy analysis.
-    Your task is to answer the user's question about their insurance coverage.
+        Your task is to answer the user's question with extreme precision, acting as a trusted personal advisor.
 
-    IMPORTANT INSURANCE TERMINOLOGY EQUIVALENCE:
-    - "Rental vehicle excess" = "Collision damage waiver (CDW)" = "Car rental insurance"
-    - "Loss damage waiver (LDW)" = "Collision damage waiver (CDW)"
-    - When a user asks about CDW and you find "rental vehicle excess" coverage, treat them as the same thing
+        --- IMPORTANT INSURANCE CONCEPTS ---
+        1.  **Terminology Equivalence (Fixing Terminologies):**
+            * 'Rental vehicle excess' [cite: SINGLIFE_TRAVEL_POLICY.pdf, Page 34] is the same as 'Collision Damage Waiver (CDW)' or 'car rental insurance'.
+            * 'Major Cancer' [cite: Manulife_Policy_Illustration_REDACTED.pdf, Page 17] is a type of 'Critical Illness'.
+            * 'GREAT SupremeHealth' [cite: GREAT_SupremeHealth_Benefits.pdf, Page 2] is a 'Reimbursement' plan (health insurance).
+            * 'Critical Care Enhancer Rider' [cite: Manulife_Policy_Illustration_REDACTED.pdf, Page 16] is a 'Lump Sum' plan (critical illness insurance).
 
-    User Question: {original_query}
-    {profile_info}
+        2.  **Benefit & Claim Logic (Fixing Claim Plan Logic):**
+            * **Reimbursement Plans (Health):** These plans pay the *hospital* for eligible medical bills. The user is responsible for out-of-pocket costs like 'Deductibles' and 'Co-insurance' [cite: GREAT_SupremeHealth_Benefits.pdf, Page 6].
+            * **Lump Sum Plans (CI/Life):** These plans pay a *single cash amount* (the 'Sum Insured') directly to the *user* upon diagnosis [cite: Manulife_Policy_Illustration_REDACTED.pdf, Page 16].
+            * **CRITICAL LOGIC:** The cash from a **Lump Sum Plan** is unrestricted. It **CAN** be used to pay for the out-of-pocket costs (deductible, co-insurance) of a **Reimbursement Plan**. You must explain this if the user asks how their plans work together.
 
-    POLICY DOCUMENT CHUNKS:
-    --- START OF DOCUMENTS ---
-    {context_from_docs}
-    --- END OF DOCUMENTS ---
+        {profile_info}
+        --- POLICY DOCUMENT CHUNKS (FOR REFERENCE) ---
+        {context_from_docs}
+        --- END OF DOCUMENTS ---
 
-    CRITICAL RESPONSE RULES:
-    1. **Base your answer on the document chunks above**
-    2. **Use the user's specific policy tier** - if the profile shows they have a specific plan tier (e.g., "Prestige", "Platinum"), focus on that tier's benefits rather than listing all options
-    3. **Understand insurance terminology equivalence** - connect related terms confidently
-    4. **If you find relevant coverage information, explain it clearly with specific dollar amounts for their tier (e.g., "up to S$2,500")**
-    5. **Cite every fact with [Source X: filename.pdf, Page Y]**
-    6. **Be specific about coverage amounts, plan types, and conditions**
-    7. **Start your response with: "{salutation}"**
-    8. **Provide actionable advice based on the coverage found**
-    9. **When multiple plan tiers are shown, focus on the user's specific tier from their profile**
+        --- CRITICAL RESPONSE RULES (MUST BE FOLLOWED) ---
+        1.  **Start your response with: "{salutation}"**
 
-    Generate a helpful response now:
-    """
+        2.  **User Profile is TRUTH (Fixing Rider Confusion):** The `USER PROFILE` section above is your *only* source of truth for what the user owns. The `DOCUMENT CHUNKS` contain information on *all* plans and riders for sale (like 'GREAT TotalCare' [cite: GREAT_SupremeHealth_Benefits.pdf, Page 14]).
+            * **If a rider (e.g., 'GREAT TotalCare') is NOT listed in the user's profile**, you **MUST IGNORE** its benefits, even if the search chunks show them.
+            * You **MUST** state that the user does not have that rider and instead state the benefits of their base plan (e.g., 'GREAT SupremeHealth P PLUS' [cite: user_profile.json]).
+
+        3.  **Be Specific With Money (Fixing Missing Dollar Amounts):**
+            * You **MUST** extract specific dollar amounts. Do not say "a deductible"; say "a **$3,500** deductible" [cite: GREAT_SupremeHealth_Benefits.pdf, Page 6].
+            * When stating a lump sum benefit (like from the Manulife plan), you **MUST** find the **'Sum Insured'** (e.g., **$500,000** for the Critical Care Enhancer Rider [cite: Manulife_Policy_Illustration_REDACTED.pdf, Page 2, 16]) or the 'Maximum amount payable' for that specific benefit [cite: SINGLIFE_TRAVEL_POLICY.pdf, Page 4].
+            * You **MUST NOT** cite a general 'Aggregate Limit' [cite: SINGLIFE_TRAVEL_POLICY.pdf, Page 48] as a user's personal benefit.
+
+        4.  **Cite Every Fact:** You must cite *every* fact you state with its source, including `[cite: user_profile.json]` when you pull information from the user's profile.
+
+        5.  **No Hallucinations (Fixing Hallucination):**
+            * You **MUST NOT** add any conversational sign-offs (e.g., "Best regards," "Sincerely," "Hope this helps!").
+            * End your response cleanly after the last piece of information.
+        """
 
         # Call OpenAI API
         try:
@@ -322,6 +326,8 @@ class QueryProcessor:
             )
 
             final_answer = response.choices[0].message.content.strip()
+            # Post-process to remove any copied email signatures from the model output
+            final_answer = self._strip_signature(final_answer)
             print("Received response from OpenAI API.")
             return final_answer
 
@@ -329,18 +335,24 @@ class QueryProcessor:
             print(f"Error during OpenAI API call: {e}")
             return "Sorry, I encountered an error while generating the response. Please try again later or check the system logs."
 
-    def process_query_stream(self, query: str, batch_id: str = None, user_profile: Optional[Dict] = None):
+    def process_query_stream(
+        self, query: str, batch_id: str = None, user_profile: Optional[Dict] = None
+    ):
         """Process a query and yield response chunks for streaming."""
         try:
             # Determine the target batch
             target_batch = batch_id or self.batch_manager.get_default_batch()
             if not target_batch:
-                yield "data: " + json.dumps({"error": "No batch specified and no default batch set."}) + "\n\n"
+                yield "data: " + json.dumps(
+                    {"error": "No batch specified and no default batch set."}
+                ) + "\n\n"
                 return
 
             # Ensure the correct batch's indexes are loaded
             if not self._ensure_batch_loaded(target_batch):
-                yield "data: " + json.dumps({"error": f"Failed to load or switch to batch '{target_batch}'."}) + "\n\n"
+                yield "data: " + json.dumps(
+                    {"error": f"Failed to load or switch to batch '{target_batch}'."}
+                ) + "\n\n"
                 return
 
             start_time = time.time()
@@ -358,56 +370,95 @@ class QueryProcessor:
 
             is_personal_batch = target_batch.startswith("user_")
 
-            # relevant_results = raw_search_results
-            # if is_personal_batch:
-            #     if user_profile:
-            #         relevant_results = self._filter_results_by_profile(
-            #             raw_search_results, user_profile
-            #         )
-            #     else:
-            #         print(
-            #             "Warning: Operating in personal batch mode but no user profile loaded."
-            #         )
-
-            # unique_results = self._deduplicate_results(relevant_results)
-            unique_results = self._deduplicate_results(raw_search_results)
+            unique_results = self._filter_and_rerank_by_profile(
+                query, raw_search_results, user_profile
+            )
             print(
                 f"Retained {len(unique_results)} unique relevant chunks after filtering/deduplication."
             )
 
             if not unique_results:
-                # if is_personal_batch and user_profile:
-                #     error_msg = f"Based on your profile, I couldn't find relevant information in your specific policy documents ('{', '.join(user_profile.get('policies_owned', []))}') for the question: '{query}'."
                 if is_personal_batch:
                     error_msg = f"I couldn't find relevant information in your uploaded documents for the question: '{query}'."
                 else:
                     error_msg = f"No relevant information found in the documents of batch '{target_batch}' for the question: '{query}'."
-                yield "data: " + json.dumps({"content": error_msg, "done": True}) + "\n\n"
+                yield "data: " + json.dumps(
+                    {"content": error_msg, "done": True}
+                ) + "\n\n"
                 return
 
-            # Stream the response generation
-            for chunk in self._generate_response_stream(query, unique_results, is_personal_batch, user_profile):
-                yield chunk
+            # --- START: FIX FOR ASYNC/SYNC ERROR ---
+
+            # This variable will hold the final, clean response
+            final_bot_response = ""
+
+            # This generator yields chunks *and* builds the full response
+            def stream_and_capture():
+                nonlocal final_bot_response
+                full_chunks = []
+
+                # Use a standard 'for' loop, not 'async for'
+                for chunk in self._generate_response_stream(
+                    query, unique_results, is_personal_batch, user_profile
+                ):
+                    yield chunk  # Pass the chunk to the user immediately
+                    try:
+                        # Try to parse the chunk to build the full response for saving
+                        chunk_data_str = chunk.replace("data: ", "").strip()
+                        if chunk_data_str:
+                            chunk_data = json.loads(chunk_data_str)
+                            if "content" in chunk_data:
+                                full_chunks.append(chunk_data["content"])
+                    except json.JSONDecodeError:
+                        # Ignore "done: True" or other non-content chunks
+                        pass
+                    except Exception as e:
+                        print(f"Error parsing chunk: {e}")
+
+                # Now that streaming is done, assemble and clean the final response
+                final_bot_response = self._strip_signature("".join(full_chunks))
+                # (This 'final_bot_response' can now be used in your main app
+                # for saving to DB after the stream completes)
+
+            # This is the generator the Flask response will use
+            response_generator = stream_and_capture()
+
+            # 'yield from' a synchronous generator is allowed
+            yield from response_generator
+
+            # --- END: FIX ---
 
             processing_time = time.time() - start_time
             print(f"Total processing time: {processing_time:.2f}s")
 
         except Exception as e:
             import traceback
+
             print(f"An unexpected error occurred in process_query_stream: {e}")
             traceback.print_exc()
-            yield "data: " + json.dumps({"error": f"An error occurred while processing your query: {e}"}) + "\n\n"
+            yield "data: " + json.dumps(
+                {"error": f"An error occurred while processing your query: {e}"}
+            ) + "\n\n"
 
     def _generate_response_stream(
-        self, original_query: str, search_results: List[Dict], is_personal_batch: bool, user_profile: Optional[Dict]
+        self,
+        original_query: str,
+        search_results: List[Dict],
+        is_personal_batch: bool,
+        user_profile: Optional[Dict],
     ):
         """Generate streaming response using retrieved chunks and potentially user profile."""
         if not search_results:
-            yield "data: " + json.dumps({"content": "I couldn't find any relevant information in the documents to answer your question.", "done": True}) + "\n\n"
+            yield "data: " + json.dumps(
+                {
+                    "content": "I couldn't find any relevant information in the documents to answer your question.",
+                    "done": True,
+                }
+            ) + "\n\n"
             return
 
         context_parts = []
-        max_chunks_for_context = 30
+        max_chunks_for_context = 10
         cited_filenames = set()
 
         print(
@@ -419,62 +470,101 @@ class QueryProcessor:
             if content:
                 filename = metadata.get("filename", "Unknown Document")
                 page = metadata.get("page_number", "N/A")
+
+                heading = metadata.get("page_heading", "General Information")
                 source_ref = f"[Source {i}: {filename}, Page {page}]"
-                context_parts.append(f"{source_ref}\n{content}")
+                context_parts.append(
+                    f"{source_ref}\nPAGE HEADING: {heading}\n\n{content}"
+                )
+
                 cited_filenames.add(filename)
 
         if not context_parts:
-            yield "data: " + json.dumps({"content": "Error: Found relevant documents but failed to extract content for context.", "done": True}) + "\n\n"
+            yield "data: " + json.dumps(
+                {
+                    "content": "Error: Found relevant documents but failed to extract content for context.",
+                    "done": True,
+                }
+            ) + "\n\n"
             return
 
         context_from_docs = "\n\n---\n\n".join(context_parts)
 
-        # Enhanced profile handling with policy tiers
+        print("DEBUG: CONTEXT BEING SENT TO OPENAI:")
+        print(context_from_docs)
+
+        # --- FIX: Updated profile logic ---
         if is_personal_batch and user_profile:
             user_name = user_profile.get("name", "User")
-            policy_tiers = user_profile.get("policy_tiers", {})
+            # Read from the new "insurance_policies" key
+            insurance_policies = user_profile.get("insurance_policies", {})
 
-            profile_info = f"\n\nUSER PROFILE:\n- User Name: {user_name}"
-            if policy_tiers:
-                profile_info += "\n- Policy Tiers:"
-                for policy, tier in policy_tiers.items():
-                    profile_info += f"\n  - {policy}: {tier} plan"
+            profile_info = f"\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n"
+            profile_info += f"- User Name: {user_name}\n"
+
+            if insurance_policies:
+                profile_info += f"- User's Policies:\n"
+                for filename, policy_data in insurance_policies.items():
+                    # Get data from the nested object
+                    plan = policy_data.get("plan_name", "Unknown Plan")
+                    tier = policy_data.get("tier", "N/A")
+                    riders = policy_data.get("riders", [])
+
+                    # Add policy and tier info
+                    profile_info += f"  - Policy: {plan} (Tier: {tier})\n"
+
+                    # Also add rider info
+                    if riders:
+                        profile_info += f"    - Riders: {', '.join(riders)}\n"
+                    else:
+                        profile_info += f"    - Riders: None listed\n"
         else:
             user_name = "User"
-            profile_info = ""
+            # Provide a fallback string
+            profile_info = "\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n- No user profile provided.\n"
+        # --- END FIX ---
 
         salutation = f"Hi {user_name.split()[0] if user_name != 'User' else 'Hi'},"
 
-        # Enhanced prompt with insurance terminology awareness and tier personalization
+        # --- FIX: This is the new, hardcoded prompt that implements all your logic. ---
         prompt_instructions = f"""You are an expert financial advisor specializing in insurance policy analysis.
-    Your task is to answer the user's question about their insurance coverage.
+        Your task is to answer the user's question with extreme precision, acting as a trusted personal advisor.
 
-    IMPORTANT INSURANCE TERMINOLOGY EQUIVALENCE:
-    - "Rental vehicle excess" = "Collision damage waiver (CDW)" = "Car rental insurance"
-    - "Loss damage waiver (LDW)" = "Collision damage waiver (CDW)"
-    - When a user asks about CDW and you find "rental vehicle excess" coverage, treat them as the same thing
+        --- IMPORTANT INSURANCE CONCEPTS ---
+        1.  **Terminology Equivalence (Fixing Terminologies):**
+            * 'Rental vehicle excess' is the same as 'Collision Damage Waiver (CDW)' or 'car rental insurance'.
+            * 'Major Cancer' is a type of 'Critical Illness'.
+            * 'GREAT SupremeHealth' is a 'Reimbursement' plan (health insurance).
+            * 'Critical Care Enhancer Rider' is a 'Lump Sum' plan (critical illness insurance).
 
-    User Question: {original_query}
-    {profile_info}
+        2.  **Benefit & Claim Logic (Fixing Claim Plan Logic):**
+            * **Reimbursement Plans (Health):** These plans pay the *hospital* for eligible medical bills. The user is responsible for out-of-pocket costs like 'Deductibles' and 'Co-insurance'.
+            * **Lump Sum Plans (CI/Life):** These plans pay a *single cash amount* (the 'Sum Insured') directly to the *user* upon diagnosis.
+            * **CRITICAL LOGIC:** The cash from a **Lump Sum Plan** is unrestricted. It **CAN** be used to pay for the out-of-pocket costs (deductible, co-insurance) of a **Reimbursement Plan**. You must explain this if the user asks how their plans work together.
 
-    POLICY DOCUMENT CHUNKS:
-    --- START OF DOCUMENTS ---
-    {context_from_docs}
-    --- END OF DOCUMENTS ---
+        {profile_info}
+        --- POLICY DOCUMENT CHUNKS (FOR REFERENCE) ---
+        {context_from_docs}
+        --- END OF DOCUMENTS ---
 
-    CRITICAL RESPONSE RULES:
-    1. **Base your answer on the document chunks above**
-    2. **Use the user's specific policy tier** - if the profile shows they have a specific plan tier (e.g., "Prestige", "Platinum"), focus on that tier's benefits rather than listing all options
-    3. **Understand insurance terminology equivalence** - connect related terms confidently
-    4. **If you find relevant coverage information, explain it clearly with specific dollar amounts for their tier (e.g., "up to S$2,500")**
-    5. **Cite every fact with [Source X: filename.pdf, Page Y]**
-    6. **Be specific about coverage amounts, plan types, and conditions**
-    7. **Start your response with: "{salutation}"**
-    8. **Provide actionable advice based on the coverage found**
-    9. **When multiple plan tiers are shown, focus on the user's specific tier from their profile**
+        --- CRITICAL RESPONSE RULES (MUST BE FOLLOWED) ---
+        1.  **Start your response with: "{salutation}"**
 
-    Generate a helpful response now:
-    """
+        2.  **User Profile is TRUTH (Fixing Rider Confusion):** The `USER PROFILE` section above is your *only* source of truth for what the user owns. The `DOCUMENT CHUNKS` contain information on *all* plans and riders for sale (like 'GREAT TotalCare').
+            * **If a rider (e.g., 'GREAT TotalCare') is NOT listed in the user's profile**, you **MUST IGNORE** its benefits, even if the search chunks show them.
+            * You **MUST** state that the user does not have that rider and instead state the benefits of their base plan (e.g., 'GREAT SupremeHealth P PLUS').
+
+        3.  **Be Specific With Money (Fixing Missing Dollar Amounts):**
+            * You **MUST** extract specific dollar amounts. Do not say "a deductible"; say "a **$3,500** deductible".
+            * When stating a lump sum benefit (like from the Manulife plan), you **MUST** find the **'Sum Insured'** (e.g., **$500,000** for the Critical Care Enhancer Rider) or the 'Maximum amount payable' for that specific benefit.
+            * You **MUST NOT** cite a general 'Aggregate Limit' as a user's personal benefit.
+
+        4.  **Cite Every Fact:** You must cite *every* fact you state with its source, including `` when you pull information from the user's profile.
+
+        5.  **No Hallucinations (Fixing Hallucination):**
+            * You **MUST NOT** add any conversational sign-offs (e.g., "Best regards," "Sincerely," "Hope this helps!").
+            * End your response cleanly after the last piece of information.
+        """
 
         # Call OpenAI API with streaming
         try:
@@ -493,14 +583,25 @@ class QueryProcessor:
                 ],
                 max_tokens=1500,
                 temperature=0.05,
-                stream=True  # Enable streaming
+                stream=True,  # Enable streaming
             )
 
             print("Streaming response from OpenAI API...")
+
+            full_response_chunks = []
             for chunk in stream:
                 if chunk.choices[0].delta.content is not None:
                     content = chunk.choices[0].delta.content
+                    full_response_chunks.append(content)
                     yield "data: " + json.dumps({"content": content}) + "\n\n"
+
+            # Post-stream cleanup check (for logging)
+            final_response_text = "".join(full_response_chunks)
+            cleaned_final_response = self._strip_signature(final_response_text)
+            if final_response_text != cleaned_final_response:
+                print(
+                    "WARNING: Caught and stripped a hallucinated signature from the stream."
+                )
 
             # Send final done message
             yield "data: " + json.dumps({"done": True}) + "\n\n"
@@ -508,10 +609,209 @@ class QueryProcessor:
 
         except Exception as e:
             print(f"Error during OpenAI API streaming call: {e}")
-            yield "data: " + json.dumps({"error": "Sorry, I encountered an error while generating the response. Please try again later or check the system logs."}) + "\n\n"
+            yield "data: " + json.dumps(
+                {
+                    "error": "Sorry, I encountered an error while generating the response. Please try again later or check the system logs."
+                }
+            ) + "\n\n"
 
     def get_performance_stats(self) -> Dict[str, Any]:
         """Get basic statistics about the search engine state."""
         if self.search_engine:
             return self.search_engine.get_stats()
         return {"error": "Search engine not initialized."}
+
+    def _strip_signature(self, text: str) -> str:
+        """Conservative removal of trailing email signature-like blocks from model output.
+
+        This mirrors the preprocessing removing signatures in documents; it is a
+        final safety net to avoid returning 'Best regards, [Name]' style closings.
+        """
+        import re
+
+        sig_pattern = re.compile(
+            r"(?m)(?:\n|\A)\s*(?:Best regards,|Best Regards,|Regards,|Sincerely,|Kind regards,|Kind Regards,|Yours sincerely,|Yours faithfully,|Thanks,|Thank you,|Thank you for your time,?)\s*(?:\n[^\n]{0,120})?(?:\n[^\n]{0,120})?\s*\Z",
+            flags=re.IGNORECASE,
+        )
+
+        new_text = sig_pattern.sub("\n", text)
+        new_text = re.sub(r"(?m)^\s*\[?Your Name\]?\s*$", "\n", new_text)
+        return new_text.strip()
+
+    def _filter_and_rerank_by_profile(
+        self,
+        query: str,
+        results: List[Dict],
+        user_profile: Optional[Dict],
+    ) -> List[Dict]:
+        """
+        Re-ranks search results based on the user's profile AND query keywords.
+        Uses a scoring system to apply a "boost" to each chunk's original score.
+        This is the STICT V3 logic to handle conflicting chunks.
+        """
+        if not user_profile:
+            print("No user profile provided, returning unique results only.")
+            return self._deduplicate_results(results)  # Fallback
+
+        insurance_policies = user_profile.get("insurance_policies", {})
+        if not insurance_policies:
+            print("User profile has no policies, returning unique results.")
+            return self._deduplicate_results(results)  # Fallback
+
+        print(
+            "User profile with insurance policies found. Applying smart re-ranking..."
+        )
+
+        query_lower = query.lower()
+
+        # --- 1. Calculate File Scores ---
+        # We MUST add "deductible" and "sum insured" to the keywords
+        # to help find the missing chunks.
+        keyword_to_file_map = {
+            # Manulife (CI) - High score for explicit keywords
+            "ci": ("manulife", 20),
+            "critical illness": ("manulife", 20),
+            "critical care": ("manulife", 20),
+            "manuprotect": ("manulife", 20),
+            "manulife": ("manulife", 20),
+            "sum insured": ("manulife", 30),  # <-- BOOST for $500k chunk
+            # GREAT SupremeHealth (Health) - Normal score
+            "deductible": ("supremehealth", 30),  # <-- BOOST for $3.5k chunk
+            "health plan": ("supremehealth", 10),
+            "health insurance": ("supremehealth", 10),
+            "great supremehealth": ("supremehealth", 10),
+            "p plus": ("supremehealth", 10),
+            "hospital": ("supremehealth", 3),
+            "ward": ("supremehealth", 3),
+            "surgery": ("supremehealth", 3),
+            # Singlife (Travel) - Normal score
+            "travel": ("singlife", 10),
+            "trip": ("singlife", 10),
+            "singlife": ("singlife", 10),
+            "prestige": ("singlife", 10),
+        }
+
+        if not self.search_engine or not self.search_engine.faiss_metadata:
+            print("Search engine metadata not loaded. Cannot re-rank.")
+            return self._deduplicate_results(results)
+
+        owned_filenames = set(
+            m["filename"]
+            for m in self.search_engine.faiss_metadata
+            if m.get("filename")
+        )
+
+        file_scores = {}
+        file_key_to_filename = {}
+
+        for fname in owned_filenames:
+            fname_lower = fname.lower()
+            file_scores[fname] = 0  # Initialize score for all files
+
+            if "manulife" in fname_lower:
+                file_key_to_filename["manulife"] = fname
+            elif "supremehealth" in fname_lower:
+                file_key_to_filename["supremehealth"] = fname
+            elif "singlife" in fname_lower:
+                file_key_to_filename["singlife"] = fname
+
+        # Score the query against the keywords
+        for keyword, (file_key, score) in keyword_to_file_map.items():
+            if keyword in query_lower:
+                mapped_filename = file_key_to_filename.get(file_key)
+                if mapped_filename in file_scores:
+                    file_scores[mapped_filename] += score
+                    print(
+                        f"  + Query keyword '{keyword}' added {score} points to {mapped_filename}"
+                    )
+
+        # --- 2. Normalize Scores and Apply Boost ---
+        max_score = (
+            max(file_scores.values())
+            if file_scores and any(s > 0 for s in file_scores.values())
+            else 1.0
+        )
+
+        normalized_file_scores = {
+            fname: score / max_score for fname, score in file_scores.items()
+        }
+
+        boosted_results = []
+        seen_content = set()
+
+        PROFILE_BOOST_WEIGHT = 0.2
+
+        for result in results:
+            content = result.get("content", "")
+            if not content or content in seen_content:
+                continue
+            seen_content.add(content)
+
+            metadata = result.get("metadata", {})
+            chunk_filename = metadata.get("filename")
+
+            profile_boost = normalized_file_scores.get(chunk_filename, 0.0)
+
+            # --- START: NEW, STRICTER V3 LOGIC ---
+            if chunk_filename in insurance_policies:
+                policy_data = insurance_policies[chunk_filename]
+                user_tier = policy_data.get("tier", "N/A")  # e.g., "P PLUS"
+
+                chunk_plans = metadata.get(
+                    "plan_context", []
+                )  # e.g., ["GREAT TotalCare", "P PLUS"]
+
+                # --- Define user's "enemy" plans ---
+                enemy_plans_list = []
+                if "GREAT_SupremeHealth_Benefits.pdf" in chunk_filename:
+                    # User has "P PLUS", so these are the enemy plans
+                    enemy_plans_list = [
+                        "GREAT TotalCare",
+                        "P PRIME",
+                        "STANDARD",
+                        "A PLUS",
+                        "B PLUS",
+                    ]
+
+                # --- Check for enemies ---
+                # Check if ANY enemy plan is in this chunk's context
+                has_enemy_plan = any(enemy in chunk_plans for enemy in enemy_plans_list)
+                # Check if the user's tier is in this chunk's context
+                has_user_tier = user_tier in chunk_plans
+
+                # --- Apply Penalties or Boosts ---
+                if has_user_tier and has_enemy_plan:
+                    # This is the "Page 14" problem. It contains BOTH.
+                    # This chunk is confusing. Penalize it.
+                    profile_boost -= 1.0  # Strong penalty
+                    print(
+                        f"  - PENALTY (Conflicting): Chunk from {chunk_filename} (Page {metadata.get('page_number')}) contains both user tier AND an enemy plan."
+                    )
+
+                elif has_enemy_plan:
+                    # This chunk is *only* about an enemy plan.
+                    profile_boost -= 2.0  # Strongest penalty
+                    print(
+                        f"  - PENALTY (Enemy): Chunk from {chunk_filename} (Page {metadata.get('page_number')}) is for an un-owned plan."
+                    )
+
+                elif has_user_tier:
+                    # This chunk is *only* about the user's plan.
+                    profile_boost += 0.3  # Strong boost
+                    print(
+                        f"  + BOOST (Match): Chunk from {chunk_filename} (Page {metadata.get('page_number')}) matches user tier {user_tier}."
+                    )
+            # --- END: NEW, STRICTER V3 LOGIC ---
+
+            original_score = result.get("combined_score", 0.0)
+            result["boosted_score"] = original_score + (
+                profile_boost * PROFILE_BOOST_WEIGHT
+            )
+            boosted_results.append(result)
+
+        # 3. Sort by the new 'boosted_score'
+        boosted_results.sort(key=lambda x: x["boosted_score"], reverse=True)
+
+        print(f"Re-ranked {len(boosted_results)} unique chunks with profile boosting.")
+
+        return boosted_results

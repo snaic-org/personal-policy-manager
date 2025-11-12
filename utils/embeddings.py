@@ -1,3 +1,4 @@
+# utils/embeddings.py
 """
 Embedding Generator
 Handles text embedding generation for FAISS indexing.
@@ -10,6 +11,7 @@ load_dotenv()
 import os
 from typing import List
 import numpy as np
+
 
 class EmbeddingGenerator:
     """Generates embeddings for text chunks."""
@@ -25,7 +27,11 @@ class EmbeddingGenerator:
             from openai import OpenAI
 
             api_key = os.getenv("OPENAI_API_KEY")
-            print(f"DEBUG: API Key loaded: {api_key[:5]}...{api_key[-4:]}" if api_key else "DEBUG: API Key is None")
+            print(
+                f"DEBUG: API Key loaded: {api_key[:5]}...{api_key[-4:]}"
+                if api_key
+                else "DEBUG: API Key is None"
+            )
             if not api_key:
                 raise ValueError("OPENAI_API_KEY environment variable not set")
 
@@ -37,7 +43,9 @@ class EmbeddingGenerator:
         except Exception as e:
             print(f"Error initializing OpenAI client: {e}")
 
-    def generate_embeddings(self, texts: List[str], batch_size: int = 100) -> List[np.ndarray]:
+    def generate_embeddings(
+        self, texts: List[str], batch_size: int = 100
+    ) -> List[np.ndarray]:
         """Generate embeddings for a list of texts."""
         if not self.client:
             print("OpenAI client not available")
@@ -48,13 +56,15 @@ class EmbeddingGenerator:
         try:
             # Process in batches to avoid API limits
             for i in range(0, len(texts), batch_size):
-                batch = texts[i:i + batch_size]
+                batch = texts[i : i + batch_size]
 
-                print(f"Generating embeddings for batch {i//batch_size + 1}/{(len(texts)-1)//batch_size + 1}")
+                print(
+                    f"Generating embeddings for batch {i//batch_size + 1}/{(len(texts)-1)//batch_size + 1}"
+                )
 
                 response = self.client.embeddings.create(
                     model=self.model_name,
-                    input=batch # We assume the input is already clean
+                    input=batch,  # We assume the input is already clean
                 )
 
                 batch_embeddings = [np.array(data.embedding) for data in response.data]

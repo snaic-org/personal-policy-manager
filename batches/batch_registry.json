@@ -1,16 +1,5 @@
 {
   "batches": {
-    "user_1": {
-      "id": "user_1",
-      "name": "dinie's Policies",
-      "description": "Personal policies for user dinie",
-      "doc_count": 3,
-      "chunk_count": 182,
-      "created_at": "2025-11-07T00:31:48.478348",
-      "faiss_path": "batches/user_1/faiss_index",
-      "bm25_path": "batches/user_1/bm25_index.pkl",
-      "metadata_path": "batches/user_1/metadata.json"
-    },
     "user_2": {
       "id": "user_2",
       "name": "alice's Policies",
@@ -21,8 +10,19 @@
       "faiss_path": "batches/user_2/faiss_index",
       "bm25_path": "batches/user_2/bm25_index.pkl",
       "metadata_path": "batches/user_2/metadata.json"
+    },
+    "user_1": {
+      "id": "user_1",
+      "name": "User 1",
+      "description": "Document batch created from documents/user_1",
+      "doc_count": 3,
+      "chunk_count": 97,
+      "created_at": "2025-11-11T23:24:14.730849",
+      "faiss_path": "batches/user_1/faiss_index",
+      "bm25_path": "batches/user_1/bm25_index.pkl",
+      "metadata_path": "batches/user_1/metadata.json"
     }
   },
   "default_batch": null,
-  "last_modified": "2025-11-10T18:10:33.447937"
+  "last_modified": "2025-11-11T23:24:14.731675"
 }
