@@ -104,8 +104,39 @@ class QueryProcessor:
     def _expand_query(self, query: str) -> str:
         """
         Expands the user query using intelligent LLM rewriting for insurance domain.
+        This version is more aggressive to find critical financial terms.
         """
         try:
+            # --- START: NEW HARDCODED LOGIC ---
+            # Manually add critical keywords if the query mentions a policy type.
+            # This ensures the most important chunks (deductible, sum insured)
+            # are *always* retrieved by the initial search.
+            added_keywords = set()
+            query_lower = query.lower()
+
+            if (
+                "health plan" in query_lower
+                or "supremehealth" in query_lower
+                or "warded" in query_lower
+                or "surgery" in query_lower
+            ):
+                added_keywords.add("deductible")
+                added_keywords.add("co-insurance")
+                added_keywords.add("out-of-pocket")
+
+            if (
+                "ci" in query_lower
+                or "critical illness" in query_lower
+                or "manuprotect" in query_lower
+                or "cancer" in query_lower
+            ):
+                added_keywords.add("sum insured")
+                added_keywords.add("critical care enhancer")
+                added_keywords.add("benefit limit")
+
+            manual_expansion = " ".join(added_keywords)
+            # --- END: NEW HARDCODED LOGIC ---
+
             expansion_prompt = f"""
             You are an insurance domain expert. A user is asking: "{query}"
 
@@ -126,12 +157,14 @@ class QueryProcessor:
             response = self.client.chat.completions.create(
                 model="gpt-4o",
                 messages=[{"role": "user", "content": expansion_prompt}],
-                max_tokens=150,  # Increased for more comprehensive expansion
+                max_tokens=150,
                 temperature=0.1,
             )
 
-            keywords = response.choices[0].message.content.strip()
-            expanded_query = f"{query} {keywords}"
+            llm_keywords = response.choices[0].message.content.strip()
+
+            # Combine all three
+            expanded_query = f"{query} {manual_expansion} {llm_keywords}"
 
             print(f"Query intelligently expanded to: {expanded_query}")
             return expanded_query
@@ -243,10 +276,13 @@ class QueryProcessor:
         # Profile Handling
         if is_personal_batch and user_profile:
             user_name = user_profile.get("name", "User")
+            # --- NEW: Add user's DOB to the profile string ---
+            user_dob = user_profile.get("date_of_birth", "N/A")
             insurance_policies = user_profile.get("insurance_policies", {})
 
             profile_info = f"\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n"
             profile_info += f"- User Name: {user_name}\n"
+            profile_info += f"- User DOB: {user_dob}\n"  # <-- NEW LINE
 
             if insurance_policies:
                 profile_info += f"- User's Policies:\n"
@@ -270,22 +306,21 @@ class QueryProcessor:
 
         salutation = f"Hi {user_name.split()[0] if user_name != 'User' else 'Hi'},"
 
-        # Enhanced prompt with insurance terminology awareness and tier personalization
-        # This is the new, hardcoded prompt that implements all your logic.
+        # --- NEW V6 PROMPT ---
         prompt_instructions = f"""You are an expert financial advisor specializing in insurance policy analysis.
-        Your task is to answer the user's question with extreme precision, acting as a trusted personal advisor.
+        Your task is to answer the user's question with extreme precision, relevance, and personalization.
 
         --- IMPORTANT INSURANCE CONCEPTS ---
-        1.  **Terminology Equivalence (Fixing Terminologies):**
-            * 'Rental vehicle excess' is the same as 'Collision Damage Waiver (CDW)' or 'car rental insurance'.
-            * 'Major Cancer' is a type of 'Critical Illness'.
+        1.  **Terminology Equivalence:**
+            * 'Rental vehicle excess' is the same as 'Collision Damage Waiver (CDW)'.
+            * 'Major Cancer' or 'Coronary Artery By-Pass Surgery' are types of 'Critical Illness'.
             * 'GREAT SupremeHealth' is a 'Reimbursement' plan (health insurance).
             * 'Critical Care Enhancer Rider' is a 'Lump Sum' plan (critical illness insurance).
 
-        2.  **Benefit & Claim Logic (Fixing Claim Plan Logic):**
-            * **Reimbursement Plans (Health):** These plans pay the *hospital* for eligible medical bills. The user is responsible for out-of-pocket costs like 'Deductibles' and 'Co-insurance'.
-            * **Lump Sum Plans (CI/Life):** These plans pay a *single cash amount* (the 'Sum Insured') directly to the *user* upon diagnosis.
-            * **CRITICAL LOGIC:** The cash from a **Lump Sum Plan** is unrestricted. It **CAN** be used to pay for the out-of-pocket costs (deductible, co-insurance) of a **Reimbursement Plan**. You must explain this if the user asks how their plans work together.
+        2.  **Benefit & Claim Logic:**
+            * **Reimbursement Plans (Health):** Pay the *hospital* for bills. The user pays 'Deductibles' and 'Co-insurance'.
+            * **Lump Sum Plans (CI/Life):** Pay a *single cash amount* (the 'Sum Insured') to the *user* upon diagnosis.
+            * **CRITICAL LOGIC:** The cash from a **Lump Sum Plan** is unrestricted. It **CAN** be used to pay for the out-of-pocket costs (deductible, co-insurance) of a **Reimbursement Plan**. You MUST explain this if the user's query involves both.
 
         {profile_info}
         --- POLICY DOCUMENT CHUNKS (FOR REFERENCE) ---
@@ -293,22 +328,33 @@ class QueryProcessor:
         --- END OF DOCUMENTS ---
 
         --- CRITICAL RESPONSE RULES (MUST BE FOLLOWED) ---
-        1.  **Start your response with: "{salutation}"**
+        1.  **BE RELEVANT (Fixing Irrelevance):**
+            * **ONLY** discuss policies relevant to the query.
+            * **If the query is about a medical diagnosis or surgery (like 'cancer' or 'surgery'), DO NOT mention the 'Singlife Travel Insurance Policy'** unless the query is *also* about travel.
 
-        2.  **User Profile is TRUTH (Fixing Rider Confusion):** The `USER PROFILE` section above is your *only* source of truth for what the user owns. The `DOCUMENT CHUNKS` contain information on *all* plans and riders for sale (like 'GREAT TotalCare').
-            * **If a rider (e.g., 'GREAT TotalCare') is NOT listed in the user's profile**, you **MUST IGNORE** its benefits, even if the search chunks show them.
-            * You **MUST** state that the user does not have that rider and instead state the benefits of their base plan (e.g., 'GREAT SupremeHealth P PLUS').
+        2.  **BE PERSONALIZED (Fixing Personalization):**
+            * The `USER PROFILE` is your source of truth. It contains the user's date of birth.
+            * You **MUST** use the user's age to determine the correct age-based benefit.
+            * **DO NOT** list all possible options. For example, if the user is 24, *only* state the deductible for "up to age 80" ($3,500) and **DO NOT** mention the "$5,250 after age 80" amount.
 
-        3.  **Be Specific With Money (Fixing Missing Dollar Amounts):**
+        3.  **BE SPECIFIC (Fixing Missing Dollar Amounts):**
             * You **MUST** extract specific dollar amounts. Do not say "a deductible"; say "a **$3,500** deductible".
-            * When stating a lump sum benefit (like from the Manulife plan), you **MUST** find the **'Sum Insured'** (e.g., **$500,000** for the Critical Care Enhancer Rider) or the 'Maximum amount payable' for that specific benefit.
-            * You **MUST NOT** cite a general 'Aggregate Limit' as a user's personal benefit.
+            * You **MUST** find the **'Sum Insured'** (e.g., **$500,000** for the Critical Care Rider) or 'Maximum amount payable'.
+            * You **MUST NOT** cite a general 'Aggregate Limit' (like $2.0 million) as a user's *personal* benefit amount.
 
-        4.  **Cite Every Fact:** You must cite *every* fact you state with its source, including `` when you pull information from the user's profile.
+        4.  **RESPECT THE PROFILE (Fixing Rider Confusion):**
+            * The `USER PROFILE` shows *exactly* what the user owns.
+            * The `DOCUMENT CHUNKS` show *all* products for sale (like the 'GREAT TotalCare' rider).
+            * **If a rider (e.g., 'GREAT TotalCare') is NOT listed in the user's profile, you MUST IGNORE its benefits (like '95% deductible coverage')**, even if the search chunks show them.
+            * You **MUST** instead state the benefits of their base plan (e.g., "you are responsible for the $3,500 deductible").
 
-        5.  **No Hallucinations (Fixing Hallucination):**
-            * You **MUST NOT** add any conversational sign-offs (e.g., "Best regards," "Sincerely," "Hope this helps!").
+        5.  **CITE EVERYTHING:** You must cite *every* fact you state with its source, including `` when you pull information from the user's profile.
+
+        6.  **NO HALLUCINATIONS (Fixing Sign-off):**
+            * You **MUST NOT** add any conversational sign-offs (e.g., "Best regards," "Sincerely," "Hope this helps!", "feel free to ask!").
             * End your response cleanly after the last piece of information.
+            
+        7.  **Start your response with: "{salutation}"**
         """
 
         # Call OpenAI API
@@ -441,14 +487,9 @@ class QueryProcessor:
 
             print(f"An unexpected error occurred in process_query_stream: {e}")
             traceback.print_exc()
-            yield "data: "
-            (
-                D
-                + json.dumps(
-                    {"error": f"An error occurred while processing your query: {e}"}
-                )
-                + "\n\n"
-            )
+            yield "data: " + json.dumps(
+                {"error": f"An error occurred while processing your query: {e}"}
+            ) + "\n\n"
 
     def _generate_response_stream(
         self,
@@ -506,11 +547,14 @@ class QueryProcessor:
         # --- FIX: Updated profile logic ---
         if is_personal_batch and user_profile:
             user_name = user_profile.get("name", "User")
+            # --- NEW: Add user's DOB to the profile string ---
+            user_dob = user_profile.get("date_of_birth", "N/A")
             # Read from the new "insurance_policies" key
             insurance_policies = user_profile.get("insurance_policies", {})
 
             profile_info = f"\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n"
             profile_info += f"- User Name: {user_name}\n"
+            profile_info += f"- User DOB: {user_dob}\n"  # <-- NEW LINE
 
             if insurance_policies:
                 profile_info += f"- User's Policies:\n"
@@ -536,21 +580,21 @@ class QueryProcessor:
 
         salutation = f"Hi {user_name.split()[0] if user_name != 'User' else 'Hi'},"
 
-        # --- FIX: This is the new, hardcoded prompt that implements all your logic. ---
+        # --- NEW V6 PROMPT ---
         prompt_instructions = f"""You are an expert financial advisor specializing in insurance policy analysis.
-        Your task is to answer the user's question with extreme precision, acting as a trusted personal advisor.
+        Your task is to answer the user's question with extreme precision, relevance, and personalization.
 
         --- IMPORTANT INSURANCE CONCEPTS ---
         1.  **Terminology Equivalence (Fixing Terminologies):**
-            * 'Rental vehicle excess' is the same as 'Collision Damage Waiver (CDW)' or 'car rental insurance'.
-            * 'Major Cancer' is a type of 'Critical Illness'.
+            * 'Rental vehicle excess' is the same as 'Collision Damage Waiver (CDW)'.
+            * 'Major Cancer' or 'Coronary Artery By-Pass Surgery' are types of 'Critical Illness'.
             * 'GREAT SupremeHealth' is a 'Reimbursement' plan (health insurance).
             * 'Critical Care Enhancer Rider' is a 'Lump Sum' plan (critical illness insurance).
 
         2.  **Benefit & Claim Logic (Fixing Claim Plan Logic):**
-            * **Reimbursement Plans (Health):** These plans pay the *hospital* for eligible medical bills. The user is responsible for out-of-pocket costs like 'Deductibles' and 'Co-insurance'.
-            * **Lump Sum Plans (CI/Life):** These plans pay a *single cash amount* (the 'Sum Insured') directly to the *user* upon diagnosis.
-            * **CRITICAL LOGIC:** The cash from a **Lump Sum Plan** is unrestricted. It **CAN** be used to pay for the out-of-pocket costs (deductible, co-insurance) of a **Reimbursement Plan**. You must explain this if the user asks how their plans work together.
+            * **Reimbursement Plans (Health):** Pay the *hospital* for bills. The user pays 'Deductibles' and 'Co-insurance'.
+            * **Lump Sum Plans (CI/Life):** Pay a *single cash amount* (the 'Sum Insured') to the *user* upon diagnosis.
+            * **CRITICAL LOGIC:** The cash from a **Lump Sum Plan** is unrestricted. It **CAN** be used to pay for the out-of-pocket costs (deductible, co-insurance) of a **Reimbursement Plan**. You MUST explain this if the user's query involves both.
 
         {profile_info}
         --- POLICY DOCUMENT CHUNKS (FOR REFERENCE) ---
@@ -558,22 +602,33 @@ class QueryProcessor:
         --- END OF DOCUMENTS ---
 
         --- CRITICAL RESPONSE RULES (MUST BE FOLLOWED) ---
-        1.  **Start your response with: "{salutation}"**
+        1.  **BE RELEVANT (Fixing Irrelevance):**
+            * **ONLY** discuss policies relevant to the query.
+            * **If the query is about a medical diagnosis or surgery (like 'cancer' or 'surgery'), DO NOT mention the 'Singlife Travel Insurance Policy'** unless the query is *also* about travel.
 
-        2.  **User Profile is TRUTH (Fixing Rider Confusion):** The `USER PROFILE` section above is your *only* source of truth for what the user owns. The `DOCUMENT CHUNKS` contain information on *all* plans and riders for sale (like 'GREAT TotalCare').
-            * **If a rider (e.g., 'GREAT TotalCare') is NOT listed in the user's profile**, you **MUST IGNORE** its benefits, even if the search chunks show them.
-            * You **MUST** state that the user does not have that rider and instead state the benefits of their base plan (e.g., 'GREAT SupremeHealth P PLUS').
+        2.  **BE PERSONALIZED (Fixing Personalization):**
+            * The `USER PROFILE` is your source of truth. It contains the user's date of birth.
+            * You **MUST** use the user's age to determine the correct age-based benefit.
+            * **DO NOT** list all possible options. For example, if the user is 24, *only* state the deductible for "up to age 80" ($3,500) and **DO NOT** mention the "$5,250 after age 80" amount.
 
-        3.  **Be Specific With Money (Fixing Missing Dollar Amounts):**
+        3.  **BE SPECIFIC (Fixing Missing Dollar Amounts):**
             * You **MUST** extract specific dollar amounts. Do not say "a deductible"; say "a **$3,500** deductible".
-            * When stating a lump sum benefit (like from the Manulife plan), you **MUST** find the **'Sum Insured'** (e.g., **$500,000** for the Critical Care Enhancer Rider) or the 'Maximum amount payable' for that specific benefit.
-            * You **MUST NOT** cite a general 'Aggregate Limit' as a user's personal benefit.
+            * You **MUST** find the **'Sum Insured'** (e.g., **$500,000** for the Critical Care Rider) or 'Maximum amount payable'.
+            * You **MUST NOT** cite a general 'Aggregate Limit' (like $2.0 million) as a user's *personal* benefit amount.
 
-        4.  **Cite Every Fact:** You must cite *every* fact you state with its source, including `` when you pull information from the user's profile.
+        4.  **RESPECT THE PROFILE (Fixing Rider Confusion):**
+            * The `USER PROFILE` shows *exactly* what the user owns.
+            * The `DOCUMENT CHUNKS` show *all* products for sale (like the 'GREAT TotalCare' rider).
+            * **If a rider (e.g., 'GREAT TotalCare') is NOT listed in the user's profile, you MUST IGNORE its benefits (like '95% deductible coverage')**, even if the search chunks show them.
+            * You **MUST** instead state the benefits of their base plan (e.g., "you are responsible for the $3,500 deductible").
 
-        5.  **No Hallucinations (Fixing Hallucination):**
-            * You **MUST NOT** add any conversational sign-offs (e.g., "Best regards," "Sincerely," "Hope this helps!").
+        5.  **CITE EVERYTHING:** You must cite *every* fact you state with its source, including `` when you pull information from the user's profile.
+
+        6.  **NO HALLUCINATIONS (Fixing Sign-off):**
+            * You **MUST NOT** add any conversational sign-offs (e.g., "Best regards," "Sincerely," "Hope this helps!", "feel free to ask!").
             * End your response cleanly after the last piece of information.
+            
+        7.  **Start your response with: "{salutation}"**
         """
 
         # Call OpenAI API with streaming
@@ -657,7 +712,7 @@ class QueryProcessor:
         """
         Re-ranks search results based on the user's profile AND query keywords.
         Uses a scoring system to apply a "boost" to each chunk's original score.
-        This is the STICT V4 logic to handle conflicting chunks.
+        This is the STICT V5 logic to handle conflicting chunks.
         """
         if not user_profile:
             print("No user profile provided, returning unique results only.")
@@ -764,7 +819,7 @@ class QueryProcessor:
             # Start with the file-level boost
             profile_boost = normalized_file_scores.get(chunk_filename, 0.0)
 
-            # --- START: NEW, STRICTER V4 LOGIC ---
+            # --- START: NEW, STRICTER V5 LOGIC ---
             if chunk_filename in insurance_policies:
                 policy_data = insurance_policies[chunk_filename]
                 user_tier = policy_data.get("tier", "N/A")  # e.g., "P PLUS"
@@ -775,49 +830,20 @@ class QueryProcessor:
                 chunk_plans = metadata.get(
                     "plan_context", []
                 )  # e.g., ["GREAT TotalCare", "P PLUS"]
-                page_heading = metadata.get("page_heading", "").lower()
-
-                # --- Define what an "enemy" is for this chunk ---
-                is_enemy_chunk = False
-
-                if "GREAT_SupremeHealth_Benefits.pdf" in chunk_filename:
-                    # The user does NOT own "GREAT TotalCare".
-                    # Check if the chunk is about this enemy rider.
-                    if (
-                        "great totalcare" in page_heading
-                        or "GREAT TotalCare" in chunk_plans
-                    ):
-                        # This chunk is about the rider the user doesn't own.
-                        # We must check if "P PLUS" is *also* present (the fine print problem)
-                        if user_tier not in chunk_plans:
-                            # Simple case: chunk is just for the enemy rider.
-                            is_enemy_chunk = True
-                        elif (
-                            user_tier in chunk_plans
-                            and "great totalcare" in page_heading
-                        ):
-                            # Tricky case: chunk is for "P PLUS" but the *heading* is "GREAT TotalCare".
-                            # This means the chunk's *primary subject* is the rider. Penalize it.
-                            is_enemy_chunk = True
-
-                # --- Apply Penalties or Boosts based on context ---
-                if is_enemy_chunk:
-                    # This chunk is primarily about a rider the user does not own.
-                    profile_boost -= 2.0  # Very strong penalty
-                    print(
-                        f"  - PENALTY: Chunk from {chunk_filename} (Page {metadata.get('page_number')}) is for an un-owned rider."
-                    )
-
-                elif user_tier != "N/A" and user_tier in chunk_plans:
-                    # This chunk is relevant to the user's tier and is NOT an enemy chunk.
-                    profile_boost += 0.3  # Strong boost
-                    print(
-                        f"  + BOOST: Chunk from {chunk_filename} (Page {metadata.get('page_number')}) matches user tier {user_tier}."
-                    )
-
-                # --- NEW CONTENT-BASED BOOST ---
-                # Now, let's scan the *content* of the chunk for our magic words
                 content_lower = content.lower()
+
+                # --- 1. ENEMY RIDER PENALTY ---
+                # This is the most important rule.
+                # The user does NOT own "GREAT TotalCare".
+                if "GREAT TotalCare" in chunk_plans:
+                    # This chunk mentions the enemy rider. Penalize it.
+                    profile_boost -= 3.0  # Very strong penalty
+                    print(
+                        f"  --- PENALTY (Enemy Rider): Chunk from {chunk_filename} (Page {metadata.get('page_number')}) mentions 'GREAT TotalCare'."
+                    )
+
+                # --- 2. CRITICAL KEYWORD BOOST ---
+                # These boosts will find the *exact* chunks we need.
 
                 # Find the $500,000 chunk
                 if (
@@ -835,13 +861,22 @@ class QueryProcessor:
                     "great_supremehealth" in chunk_filename.lower()
                     and "3,500" in content
                     and "deductible" in content_lower
+                    and user_tier in chunk_plans
                 ):
                     profile_boost += 3.0  # MASSIVE boost
                     print(
-                        f"  +++ SUPER BOOST: Found '$3,500' + 'Deductible' in {chunk_filename} (Page {metadata.get('page_number')})"
+                        f"  +++ SUPER BOOST: Found '$3,500' + 'Deductible' + 'P PLUS' in {chunk_filename} (Page {metadata.get('page_number')})"
                     )
 
-            # --- END: NEW, STRICTER V4 LOGIC ---
+                # --- 3. BASIC TIER MATCH BOOST ---
+                elif user_tier in chunk_plans:
+                    # This is a fallback boost if the chunk is relevant but not critical
+                    profile_boost += 0.2
+                    print(
+                        f"  + BOOST (Match): Chunk from {chunk_filename} (Page {metadata.get('page_number')}) matches user tier {user_tier}."
+                    )
+
+            # --- END: NEW, STRICTER V5 LOGIC ---
 
             original_score = result.get("combined_score", 0.0)
             result["boosted_score"] = original_score + (
@@ -859,7 +894,7 @@ class QueryProcessor:
         for i, result in enumerate(boosted_results[:10]):
             meta = result["metadata"]
             print(
-                f"#{i + 1} (Score: {result['boosted_score']:.2f}) - {meta.get('filename')} Page {meta.get('page_number')} - Heading: {meta.get('page_heading')}"
+                f"#{i+1} (Score: {result['boosted_score']:.2f}) - {meta.get('filename')} Page {meta.get('page_number')} - Heading: {meta.get('page_heading')}"
             )
         print("-------------------------\n")
 
