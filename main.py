@@ -488,6 +488,25 @@ def get_history():
         print(f"Error getting history: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+@app.route("/history", methods=["DELETE"])
+@jwt_required()
+def clear_history():
+    """Clears the current user's chat history."""
+    try:
+        user_id_str = get_jwt_identity()
+        user_id_int = int(user_id_str)
+        
+        # Delete all messages for this user
+        num_deleted = Message.query.filter_by(user_id=user_id_int).delete()
+        db.session.commit()
+        
+        return jsonify({"message": f"History cleared. {num_deleted} messages deleted."}), 200
+        
+    except Exception as e:
+        print(f"Error clearing history: {str(e)}")
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/query", methods=["POST"])
 @jwt_required()
 def query_endpoint():

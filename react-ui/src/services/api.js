@@ -191,6 +191,22 @@ export async function downloadFile(filename) {
     
     return res.json(); // returns [{ role: 'user', content: '...' }, ...]
   }
+
+  export async function clearHistory() {
+    const res = await fetch(`${BASE}/history`, {
+      method: 'DELETE',
+      headers: {
+        ...getAuthHeader()
+      }
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+
+    return res.json();
+  }
   
   export async function sendQuery(query) {
     const body = { query };
