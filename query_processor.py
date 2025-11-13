@@ -17,7 +17,6 @@ from openai import OpenAI
 
 from batch_manager import BatchManager
 from utils.search import HybridSearchEngine
-from research import DeepResearch
 
 
 class QueryProcessor:
@@ -92,21 +91,22 @@ class QueryProcessor:
         self, results: List[Dict], user_profile: Optional[Dict]
     ) -> List[Dict]:
         """Filters search results to only include documents listed in the user profile."""
-        # Only filter if a profile with policies_owned exists
-        if not user_profile or "policies_owned" not in user_profile:
-            print("Info: No 'policies_owned' found in profile. Returning all results.")
+        # Note: This function is not actually called. The logic is in _filter_and_rerank_by_profile
+        if not user_profile or "insurance_policies" not in user_profile:
+            print(
+                "Info: No 'insurance_policies' found in profile. Returning all results."
+            )
             return results
 
-        owned_policies = set(user_profile["policies_owned"])
+        owned_policies = set(user_profile["insurance_policies"].keys())
         if not owned_policies:
             print(
-                "Warning: 'policies_owned' list is empty in profile. Returning all results."
+                "Warning: 'insurance_policies' list is empty in profile. Returning all results."
             )
             return results
 
         filtered_results = []
         for result in results:
-            # Ensure metadata and filename exist before checking
             metadata = result.get("metadata", {})
             filename = metadata.get("filename")
             if filename and filename in owned_policies:
@@ -126,8 +126,10 @@ class QueryProcessor:
         # --- START: NEW V2 EXPANSION LOGIC ---
 
         # 1. Define hardcoded maps for critical, non-obvious terms.
-        # This map finds specific benefits.
         CRITICAL_TERM_MAP = {
+            "cabg": "Coronary Artery By-Pass Surgery heart surgery cardiovascular",
+            "bypass surgery": "Coronary Artery By-Pass Surgery heart",
+            "coronary": "Coronary Artery By-Pass Surgery heart cardiovascular",
             "angioplasty": "Angioplasty and Other Invasive Treatment",
             "stem cell": "Stem Cell Transplant",
             "pet": "Domestic Pet Care",
@@ -160,6 +162,15 @@ class QueryProcessor:
         for term, expansion in POLICY_TYPE_KEYWORDS.items():
             if term in query_lower:
                 added_keywords.update(expansion.split())
+
+        # Add keywords for specific scenarios
+        if (
+            "warded" in query_lower
+            or "surgery" in query_lower
+            or "hospital" in query_lower
+        ):
+            added_keywords.add("deductible")
+            added_keywords.add("co-insurance")
 
         manual_expansion = " ".join(added_keywords)
 
@@ -221,12 +232,10 @@ class QueryProcessor:
             print(f"\nProcessing query for batch: {target_batch}")
             print(f"Query: {query}")
 
-            # Expand query 
             expanded_query = self._expand_query(query)
-            # expanded_query = ' '.join(expanded_query.split()[:20])  # Limit to 20 terms
 
             raw_search_results = self.search_engine.hybrid_search(
-                query=expanded_query, top_k=50  # Use top_k = 20 to limit context size
+                query=expanded_query, top_k=50  # Use the expanded query
             )
             print(
                 f"Retrieved {len(raw_search_results)} raw results from hybrid search."
@@ -308,13 +317,12 @@ class QueryProcessor:
         # Profile Handling
         if is_personal_batch and user_profile:
             user_name = user_profile.get("name", "User")
-            # --- NEW: Add user's DOB to the profile string ---
             user_dob = user_profile.get("date_of_birth", "N/A")
             insurance_policies = user_profile.get("insurance_policies", {})
 
             profile_info = f"\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n"
             profile_info += f"- User Name: {user_name}\n"
-            profile_info += f"- User DOB: {user_dob}\n"  # <-- NEW LINE
+            profile_info += f"- User DOB: {user_dob}\n"
 
             if insurance_policies:
                 profile_info += f"- User's Policies:\n"
@@ -323,14 +331,31 @@ class QueryProcessor:
                     tier = policy_data.get("tier", "N/A")
                     riders = policy_data.get("riders", [])
 
+                    # --- NEW: Add Underwriting Info ---
+                    underwriting = policy_data.get("underwriting", {})
+                    exclusions = underwriting.get("exclusions")
+                    # --- END NEW ---
+
                     # Add policy and tier info
                     profile_info += f"  - Policy: {plan} (Tier: {tier})\n"
 
                     # Also add rider info
                     if riders:
-                        profile_info += f"    - Riders: {', '.join(riders)}\n"
+                        # Handle list of strings or list of dicts
+                        rider_names = [
+                            r.get("plan_name", r) if isinstance(r, dict) else r
+                            for r in riders
+                        ]
+                        profile_info += f"    - Riders: {', '.join(rider_names)}\n"
                     else:
                         profile_info += f"    - Riders: None listed\n"
+
+                    # --- NEW: Add Exclusions to prompt ---
+                    if exclusions:
+                        profile_info += (
+                            f"    - !! IMPORTANT EXCLUSION: {exclusions} !!\n"
+                        )
+                    # --- END NEW ---
         else:
             user_name = "User"
             # Provide a fallback string
@@ -338,21 +363,21 @@ class QueryProcessor:
 
         salutation = f"Hi {user_name.split()[0] if user_name != 'User' else 'Hi'},"
 
-        # --- NEW V6 PROMPT ---
+        # --- NEW V7 PROMPT ---
         prompt_instructions = f"""You are an expert financial advisor specializing in insurance policy analysis.
         Your task is to answer the user's question with extreme precision, relevance, and personalization.
 
         --- IMPORTANT INSURANCE CONCEPTS ---
-        1.  **Terminology Equivalence:**
+        1.  **Terminology Equivalence (Fixing Terminologies):**
             * 'Rental vehicle excess' is the same as 'Collision Damage Waiver (CDW)'.
             * 'Major Cancer' or 'Coronary Artery By-Pass Surgery' are types of 'Critical Illness'.
             * 'GREAT SupremeHealth' is a 'Reimbursement' plan (health insurance).
             * 'Critical Care Enhancer Rider' is a 'Lump Sum' plan (critical illness insurance).
 
-        2.  **Benefit & Claim Logic:**
+        2.  **Benefit & Claim Logic (Fixing Claim Plan Logic):**
             * **Reimbursement Plans (Health):** Pay the *hospital* for bills. The user pays 'Deductibles' and 'Co-insurance'.
             * **Lump Sum Plans (CI/Life):** Pay a *single cash amount* (the 'Sum Insured') to the *user* upon diagnosis.
-            * **CRITICAL LOGIC:** The cash from a **Lump Sum Plan** is unrestricted. It **CAN** be used to pay for the out-of-pocket costs (deductible, co-insurance) of a **Reimbursement Plan**. You MUST explain this if the user's query involves both.
+            * **CRITICAL LOGIC:** The cash from a **Lump Sum Plan** is unrestricted. It **CAN** be used to pay for the out-of-pocket costs (deductible, co-insurance) of a **Reimbursement Plan**. You must explain this if the user's query involves both.
 
         {profile_info}
         --- POLICY DOCUMENT CHUNKS (FOR REFERENCE) ---
@@ -360,33 +385,38 @@ class QueryProcessor:
         --- END OF DOCUMENTS ---
 
         --- CRITICAL RESPONSE RULES (MUST BE FOLLOWED) ---
-        1.  **BE RELEVANT (Fixing Irrelevance):**
+        
+        1.  **PROFILE IS THE ULTIMATE TRUTH:** The `USER PROFILE` section is your *only* source of truth. It overrides *everything* in the `DOCUMENT CHUNKS`.
+        
+        2.  **OBEY EXCLUSIONS (NEW RULE):**
+            * The `USER PROFILE` contains `!! IMPORTANT EXCLUSION: ... !!`. This is the most important rule and takes precedence over all other facts.
+            * **If the user asks about a topic (e.g., 'cancer') and their profile has an exclusion for it (e.g., "No coverage for cancer at all"), you MUST state that they are NOT covered.**
+            * You MUST explain *why* (e.g., "Based on your policy's underwriting, you have a specific exclusion for this condition...").
+            * **DO NOT** mention the benefits from the document chunks (like the $500,000) if an exclusion applies. This would be a direct contradiction and a major error.
+
+        3.  **BE RELEVANT (Fixing Irrelevance):**
             * **ONLY** discuss policies relevant to the query.
-            * **If the query is about a medical diagnosis or surgery (like 'cancer' or 'surgery'), DO NOT mention the 'Singlife Travel Insurance Policy'** unless the query is *also* about travel.
+            * If the query is about a medical diagnosis (like 'cancer'), **DO NOT mention the 'Singlife Travel Insurance Policy'**.
 
-        2.  **BE PERSONALIZED (Fixing Personalization):**
-            * The `USER PROFILE` is your source of truth. It contains the user's date of birth.
-            * You **MUST** use the user's age to determine the correct age-based benefit.
-            * **DO NOT** list all possible options. For example, if the user is 24, *only* state the deductible for "up to age 80" ($3,500) and **DO NOT** mention the "$5,250 after age 80" amount.
+        4.  **BE PERSONALIZED (Fixing Personalization):**
+            * Use the user's `User DOB` to determine their age.
+            * **DO NOT** list all possible options. If the user is 24, *only* state the deductible for "up to age 80" ($3,500) and **DO NOT** mention the "$5,250 after age 80" amount.
 
-        3.  **BE SPECIFIC (Fixing Missing Dollar Amounts):**
-            * You **MUST** extract specific dollar amounts. Do not say "a deductible"; say "a **$3,500** deductible".
-            * You **MUST** find the **'Sum Insured'** (e.g., **$500,000** for the Critical Care Rider) or 'Maximum amount payable'.
-            * You **MUST NOT** cite a general 'Aggregate Limit' (like $2.0 million) as a user's *personal* benefit amount.
+        5.  **BE SPECIFIC (Fixing Missing Dollar Amounts):**
+            * You **MUST** extract specific dollar amounts, *unless an exclusion (Rule #2) applies*.
+            * Find the **'Sum Insured'** (e.g., $500,000) not the 'Aggregate Limit' (e.g., $2.0 million).
 
-        4.  **RESPECT THE PROFILE (Fixing Rider Confusion):**
-            * The `USER PROFILE` shows *exactly* what the user owns.
-            * The `DOCUMENT CHUNKS` show *all* products for sale (like the 'GREAT TotalCare' rider).
-            * **If a rider (e.g., 'GREAT TotalCare') is NOT listed in the user's profile, you MUST IGNORE its benefits (like '95% deductible coverage')**, even if the search chunks show them.
+        6.  **RESPECT THE PROFILE (Fixing Rider Confusion):**
+            * If a rider (e.g., 'GREAT TotalCare') is **NOT** listed in the `User's Policies` section, you **MUST IGNORE** its benefits (like '95% deductible coverage'), even if the search chunks show them.
             * You **MUST** instead state the benefits of their base plan (e.g., "you are responsible for the $3,500 deductible").
 
-        5.  **CITE EVERYTHING:** You must cite *every* fact you state with its source, including `` when you pull information from the user's profile.
+        7.  **CITE EVERYTHING:** You must cite *every* fact you state with its source. When obeying a profile exclusion, cite ``.
 
-        6.  **NO HALLUCINATIONS (Fixing Sign-off):**
+        8.  **NO HALLUCINATIONS (Fixing Sign-off):**
             * You **MUST NOT** add any conversational sign-offs (e.g., "Best regards," "Sincerely," "Hope this helps!", "feel free to ask!").
             * End your response cleanly after the last piece of information.
             
-        7.  **Start your response with: "{salutation}"**
+        9.  **Start your response with: "{salutation}"**
         """
 
         # Call OpenAI API
@@ -396,11 +426,11 @@ class QueryProcessor:
                 raise ValueError("OpenAI client is not initialized.")
 
             response = self.client.chat.completions.create(
-                model="gpt-4o",  # use gpt-3.5-turbo for cheaper model
+                model="gpt-4o",
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an expert financial advisor. Answer insurance questions using the provided document chunks, with proper citations. Always include specific coverage amounts when available in the documents. Understand that insurance terminology can have equivalent meanings (e.g., 'rental vehicle excess' = 'collision damage waiver'). Always personalize responses based on the user's specific policy tiers when available.",
+                        "content": "You are an expert financial advisor. Answer insurance questions using the provided document chunks AND the user profile. The user profile, especially underwriting exclusions, is the absolute source of truth and overrides all document chunks.",
                     },
                     {"role": "user", "content": prompt_instructions},
                 ],
@@ -442,28 +472,14 @@ class QueryProcessor:
             print(f"\nProcessing query for batch: {target_batch}")
             print(f"Query: {query}")
 
-            # Analyze query intent ---- for deep research part
-            # try:
-            #     intent_response = self.client.chat.completions.create(
-            #         model="gpt-4o",  # gpt-3.5-turbo for cheaper model
-            #         messages=[{"role": "user", "content": self._get_intent_prompt(query)}],
-            #         response_format={"type": "json_object"},
-            #         temperature=0.1
-            #     )
-            #     intent = json.loads(intent_response.choices[0].message.content)
-            # except Exception as e:
-            #     print(f"Error analyzing intent: {e}")
-            #     intent = {
-            #         "needs_comparison": False,
-            #         "asks_about_uncovered_features": False,
-            #         "requires_external_info": False
-            #     }
-
             expanded_query = self._expand_query(query)
+
             raw_search_results = self.search_engine.hybrid_search(
                 query=expanded_query, top_k=50
             )
-            print(f"Retrieved {len(raw_search_results)} raw results from hybrid search.")
+            print(
+                f"Retrieved {len(raw_search_results)} raw results from hybrid search."
+            )
 
             is_personal_batch = target_batch.startswith("user_")
 
@@ -474,15 +490,6 @@ class QueryProcessor:
                 f"Retained {len(unique_results)} unique relevant chunks after filtering/deduplication."
             )
 
-            # Determine if we need deep research
-            # needs_research = (
-            #     intent["needs_comparison"] or
-            #     intent["asks_about_uncovered_features"] or
-            #     intent["requires_external_info"] or
-            #     len(unique_results) == 0
-            # )
-
-            # if not unique_results and not needs_research:
             if not unique_results:
                 if is_personal_batch:
                     error_msg = f"I couldn't find relevant information in your uploaded documents for the question: '{query}'."
@@ -536,7 +543,6 @@ class QueryProcessor:
 
             processing_time = time.time() - start_time
             print(f"Total processing time: {processing_time:.2f}s")
-            # yield "data: " + json.dumps({"done": True}) + "\n\n"
 
         except Exception as e:
             import traceback
@@ -603,31 +609,45 @@ class QueryProcessor:
         # --- FIX: Updated profile logic ---
         if is_personal_batch and user_profile:
             user_name = user_profile.get("name", "User")
-            # --- NEW: Add user's DOB to the profile string ---
             user_dob = user_profile.get("date_of_birth", "N/A")
-            # Read from the new "insurance_policies" key
             insurance_policies = user_profile.get("insurance_policies", {})
 
             profile_info = f"\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n"
             profile_info += f"- User Name: {user_name}\n"
-            profile_info += f"- User DOB: {user_dob}\n"  # <-- NEW LINE
+            profile_info += f"- User DOB: {user_dob}\n"
 
             if insurance_policies:
                 profile_info += f"- User's Policies:\n"
                 for filename, policy_data in insurance_policies.items():
-                    # Get data from the nested object
                     plan = policy_data.get("plan_name", "Unknown Plan")
                     tier = policy_data.get("tier", "N/A")
                     riders = policy_data.get("riders", [])
+
+                    # --- NEW: Add Underwriting Info ---
+                    underwriting = policy_data.get("underwriting", {})
+                    exclusions = underwriting.get("exclusions")
+                    # --- END NEW ---
 
                     # Add policy and tier info
                     profile_info += f"  - Policy: {plan} (Tier: {tier})\n"
 
                     # Also add rider info
                     if riders:
-                        profile_info += f"    - Riders: {', '.join(riders)}\n"
+                        # Handle list of strings or list of dicts
+                        rider_names = [
+                            r.get("plan_name", r) if isinstance(r, dict) else r
+                            for r in riders
+                        ]
+                        profile_info += f"    - Riders: {', '.join(rider_names)}\n"
                     else:
                         profile_info += f"    - Riders: None listed\n"
+
+                    # --- NEW: Add Exclusions to prompt ---
+                    if exclusions:
+                        profile_info += (
+                            f"    - !! IMPORTANT EXCLUSION: {exclusions} !!\n"
+                        )
+                    # --- END NEW ---
         else:
             user_name = "User"
             # Provide a fallback string
@@ -636,55 +656,249 @@ class QueryProcessor:
 
         salutation = f"Hi {user_name.split()[0] if user_name != 'User' else 'Hi'},"
 
-        # --- NEW V6 PROMPT ---
         prompt_instructions = f"""You are an expert financial advisor specializing in insurance policy analysis.
         Your task is to answer the user's question with extreme precision, relevance, and personalization.
 
-        --- IMPORTANT INSURANCE CONCEPTS ---
-        1.  **Terminology Equivalence (Fixing Terminologies):**
-            * 'Rental vehicle excess' is the same as 'Collision Damage Waiver (CDW)'.
-            * 'Major Cancer' or 'Coronary Artery By-Pass Surgery' are types of 'Critical Illness'.
-            * 'GREAT SupremeHealth' is a 'Reimbursement' plan (health insurance).
-            * 'Critical Care Enhancer Rider' is a 'Lump Sum' plan (critical illness insurance).
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        PART 1: MEDICAL & INSURANCE TERMINOLOGY (CRITICAL DOMAIN KNOWLEDGE)
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-        2.  **Benefit & Claim Logic (Fixing Claim Plan Logic):**
-            * **Reimbursement Plans (Health):** Pay the *hospital* for bills. The user pays 'Deductibles' and 'Co-insurance'.
-            * **Lump Sum Plans (CI/Life):** Pay a *single cash amount* (the 'Sum Insured') to the *user* upon diagnosis.
-            * **CRITICAL LOGIC:** The cash from a **Lump Sum Plan** is unrestricted. It **CAN** be used to pay for the out-of-pocket costs (deductible, co-insurance) of a **Reimbursement Plan**. You MUST explain this if the user's query involves both.
+        **Medical Conditions (DO NOT CONFUSE THESE):**
+        ├─ CARDIOVASCULAR: Heart Attack, Stroke, Coronary Artery By-Pass Surgery (CABG), Angioplasty
+        ├─ ONCOLOGY (CANCER): Major Cancer, Carcinoma, Leukemia, Lymphoma, Tumors
+        ├─ NEUROLOGICAL: Parkinson's, Alzheimer's, Multiple Sclerosis, Paralysis
+        ├─ RENAL: Kidney Failure, End-Stage Renal Disease (ESRD)
+        ├─ ORTHOPEDIC: Joint Replacement, Spinal Surgery, Fractures
+        └─ OTHER: Diabetes, Organ Transplant, Major Burns
+
+        **Insurance Terminology Equivalents:**
+        - "Rental vehicle excess" = "Collision Damage Waiver (CDW)" = "Car rental insurance excess"
+        - "Coronary Artery By-Pass Surgery" = "CABG" = "Heart bypass"
+        - "Critical Illness" = any of the 37 major conditions (cancer, heart attack, stroke, etc.)
+        - "Major Cancer" is ONE type of critical illness (not all critical illnesses are cancer)
+
+        **Plan Types & How They Work:**
+        ┌─────────────────────────────────────────────────────────────────────────┐
+        │ REIMBURSEMENT PLANS (Health Insurance - e.g., "GREAT SupremeHealth")   │
+        ├─────────────────────────────────────────────────────────────────────────┤
+        │ • Pays the HOSPITAL directly for medical bills                         │
+        │ • User pays OUT-OF-POCKET: Deductible + Co-insurance                   │
+        │ • Example: $100k surgery → User pays $3.5k deductible + 10% of rest    │
+        └─────────────────────────────────────────────────────────────────────────┘
+
+        ┌─────────────────────────────────────────────────────────────────────────┐
+        │ LUMP SUM PLANS (CI/Life - e.g., "Critical Care Enhancer Rider")        │
+        ├─────────────────────────────────────────────────────────────────────────┤
+        │ • Pays a FIXED CASH AMOUNT directly to the USER upon diagnosis         │
+        │ • User can spend this money on ANYTHING (no restrictions)              │
+        │ • Example: Diagnosed with heart attack → Get $500k cash immediately    │
+        └─────────────────────────────────────────────────────────────────────────┘
+
+        **CRITICAL COORDINATION LOGIC:**
+        → Lump sum cash CAN be used to pay the deductible/co-insurance of a reimbursement plan.
+        → Example: Surgery costs $100k. Health plan pays $86.5k to hospital. User owes $13.5k 
+        (deductible + co-insurance). User uses CI payout ($500k) to pay that $13.5k.
+
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        PART 2: USER PROFILE (YOUR ULTIMATE SOURCE OF TRUTH)
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
         {profile_info}
-        --- POLICY DOCUMENT CHUNKS (FOR REFERENCE) ---
+
+        **PROFILE HIERARCHY (PRIORITY ORDER):**
+        1. EXCLUSIONS (!! markers) - OVERRIDES EVERYTHING
+        2. Owned Policies, Tiers, and Riders - What user actually has
+        3. User's Age (calculated from DOB) - Determines age-based benefits
+        4. Document chunks below - Use ONLY for citation and details
+
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        PART 3: POLICY DOCUMENT CHUNKS (FOR CITATION & DETAILS ONLY)
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
         {context_from_docs}
-        --- END OF DOCUMENTS ---
 
-        --- CRITICAL RESPONSE RULES (MUST BE FOLLOWED) ---
-        1.  **BE RELEVANT (Fixing Irrelevance):**
-            * **ONLY** discuss policies relevant to the query.
-            * **If the query is about a medical diagnosis or surgery (like 'cancer' or 'surgery'), DO NOT mention the 'Singlife Travel Insurance Policy'** unless the query is *also* about travel.
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        PART 4: RESPONSE RULES (FOLLOW EXACTLY IN THIS ORDER)
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-        2.  **BE PERSONALIZED (Fixing Personalization):**
-            * The `USER PROFILE` is your source of truth. It contains the user's date of birth.
-            * You **MUST** use the user's age to determine the correct age-based benefit.
-            * **DO NOT** list all possible options. For example, if the user is 24, *only* state the deductible for "up to age 80" ($3,500) and **DO NOT** mention the "$5,250 after age 80" amount.
+        STEP 1: IDENTIFY WHAT THE USER IS ASKING ABOUT
+        ─────────────────────────────────────────────────────────────────────────
+        - Read the query carefully. What medical condition or situation is mentioned?
+        - Extract the SPECIFIC condition (e.g., "Coronary Artery By-Pass Surgery" = cardiovascular)
+        - Map it to the correct category from PART 1 (cardiovascular ≠ cancer ≠ renal, etc.)
 
-        3.  **BE SPECIFIC (Fixing Missing Dollar Amounts):**
-            * You **MUST** extract specific dollar amounts. Do not say "a deductible"; say "a **$3,500** deductible".
-            * You **MUST** find the **'Sum Insured'** (e.g., **$500,000** for the Critical Care Rider) or 'Maximum amount payable'.
-            * You **MUST NOT** cite a general 'Aggregate Limit' (like $2.0 million) as a user's *personal* benefit amount.
+        STEP 2: CHECK FOR EXCLUSIONS (HIGHEST PRIORITY)
+        ─────────────────────────────────────────────────────────────────────────
+        - Look at USER PROFILE for any `!! IMPORTANT EXCLUSION: ... !!` markers
+        - Ask: Does the exclusion SPECIFICALLY apply to the condition the user asked about?
+        
+        ✓ CORRECT APPLICATION:
+            - Query: "I need cancer treatment"
+            - Exclusion: "No coverage for cancer at all"
+            - Result: NOT COVERED (cite <USER PROFILE>)
+        
+        ✗ WRONG APPLICATION:
+            - Query: "I need heart surgery" 
+            - Exclusion: "No coverage for cancer at all"
+            - Result: COVERED (cancer exclusion doesn't apply to heart conditions!)
 
-        4.  **RESPECT THE PROFILE (Fixing Rider Confusion):**
-            * The `USER PROFILE` shows *exactly* what the user owns.
-            * The `DOCUMENT CHUNKS` show *all* products for sale (like the 'GREAT TotalCare' rider).
-            * **If a rider (e.g., 'GREAT TotalCare') is NOT listed in the user's profile, you MUST IGNORE its benefits (like '95% deductible coverage')**, even if the search chunks show them.
-            * You **MUST** instead state the benefits of their base plan (e.g., "you are responsible for the $3,500 deductible").
+        - IF EXCLUSION APPLIES:
+        → State clearly: "You are NOT covered for [condition]."
+        → Explain why: "Your policy has a specific exclusion: [exclusion text]"
+        → Cite: <USER PROFILE>
+        → DO NOT mention any benefits from document chunks (contradicts the exclusion)
+        → STOP HERE. Do not continue to other rules.
 
-        5.  **CITE EVERYTHING:** You must cite *every* fact you state with its source, including `` when you pull information from the user's profile.
+        - IF NO EXCLUSION APPLIES:
+        → Proceed to STEP 3
 
-        6.  **NO HALLUCINATIONS (Fixing Sign-off):**
-            * You **MUST NOT** add any conversational sign-offs (e.g., "Best regards," "Sincerely," "Hope this helps!", "feel free to ask!").
-            * End your response cleanly after the last piece of information.
-            
-        7.  **Start your response with: "{salutation}"**
+        STEP 3: FILTER BY RELEVANCE (POLICY SELECTION)
+        ─────────────────────────────────────────────────────────────────────────
+        - Based on the query topic, determine which policies are relevant:
+        - Medical/Surgery/Hospital → Health insurance (GREAT SupremeHealth)
+        - Critical Illness diagnosis → CI riders (Critical Care Enhancer)
+        - Death → Life insurance (ManuProtect Term base plan)
+        - Travel incidents → Travel insurance (Singlife)
+
+        - IGNORE irrelevant policies completely:
+        - Query about heart surgery → DO NOT mention travel insurance
+        - Query about flight delay → DO NOT mention health insurance
+
+        STEP 4: APPLY PERSONALIZATION (AGE & TIER-BASED BENEFITS)
+        ─────────────────────────────────────────────────────────────────────────
+        - Calculate user's age from DOB in USER PROFILE
+        - Use age to select the CORRECT benefit tier from document chunks:
+        - Age 24 → Use "up to age 80" deductible ($3,500)
+        - DO NOT list "after age 80" amounts ($5,250) - not relevant yet!
+
+        - Match user's TIER from USER PROFILE to document chunk options:
+        - User has "P PLUS" → Only state P PLUS benefits
+        - DO NOT list A PLUS or B PLUS benefits
+
+        STEP 5: RESPECT RIDER OWNERSHIP (CRITICAL FILTER)
+        ─────────────────────────────────────────────────────────────────────────
+        - Check USER PROFILE for user's actual riders
+        - Document chunks may show benefits for riders the user DOES NOT OWN
+        - Example:
+        - Document chunk mentions: "GREAT TotalCare covers 95% of deductible"
+        - USER PROFILE shows: User owns ZERO riders for GREAT SupremeHealth
+        - CORRECT RESPONSE: "You are responsible for the full $3,500 deductible"
+        - WRONG RESPONSE: Mentioning the 95% coverage (user doesn't have that rider!)
+
+        STEP 6: EXTRACT SPECIFIC DOLLAR AMOUNTS
+        ─────────────────────────────────────────────────────────────────────────
+        - Find the EXACT dollar amount for the user's situation:
+        - Deductible: "$3,500" (not "a deductible")
+        - Sum Insured: "$500,000" (not "a lump sum")
+        - Co-insurance: "10%" (not "a percentage")
+
+        - Distinguish between:
+        - Personal benefit limit: "$500,000 sum insured" ✓
+        - Plan aggregate limit: "$2M annual limit" ✗ (this is not their personal payout)
+
+        STEP 7: EXPLAIN MULTI-POLICY COORDINATION (IF APPLICABLE)
+        ─────────────────────────────────────────────────────────────────────────
+        - If query involves BOTH health insurance AND CI/life insurance:
+        → Explain the coordination from PART 1:
+            1. Health plan pays hospital (user pays deductible + co-insurance)
+            2. CI/Life plan pays lump sum cash to user
+            3. User CAN use lump sum to cover their out-of-pocket costs
+        → Give specific dollar example using their actual benefits
+
+        STEP 8: CITE EVERYTHING (CRITICAL - NO HALLUCINATED CITATIONS)
+        ─────────────────────────────────────────────────────────────────────────
+        - Every fact MUST have the CORRECT citation:
+        
+        FROM USER PROFILE (cite <USER PROFILE>):
+        ✓ User's name, DOB, age
+        ✓ Which policies the user OWNS
+        ✓ Which tier/plan the user has (e.g., "P PLUS")
+        ✓ Which riders the user OWNS (e.g., "Critical Care Enhancer Rider")
+        ✓ Exclusions (!! markers)
+        
+        FROM DOCUMENT CHUNKS (cite [Source X: filename, Page Y]):
+        ✓ Dollar amounts (deductibles, sum insured, limits)
+        ✓ Benefit details (what's covered, how much, percentages)
+        ✓ Policy terms and conditions
+        ✓ How benefits work (coordination, payment process)
+        
+        NO CITATION NEEDED:
+        ✓ General insurance concepts from PART 1
+        ✓ Your logical reasoning or math calculations
+
+        - NEVER cite <USER PROFILE> for dollar amounts or benefit details!
+        - Example of CORRECT citations:
+        ✓ "You own the Critical Care Enhancer Rider <USER PROFILE>, which pays 
+            $500,000 upon diagnosis [Source 2: Manulife, Page 7]."
+        
+        - Example of WRONG citations:
+        ✗ "Your CI rider pays $500,000 <USER PROFILE>" (NO! Amount is from docs, not profile)
+
+        STEP 9: FORMAT & CLOSE
+        ─────────────────────────────────────────────────────────────────────────
+        - Start with: "{salutation}"
+        - Use clear structure:
+        - Opening: Direct answer to the question
+        - Body: Detailed breakdown with dollar amounts and citations
+        - Closing: Summary or "next steps" (if appropriate)
+        - DO NOT add conversational fluff:
+        ✗ "Hope this helps!"
+        ✗ "Feel free to ask more questions!"
+        ✗ "Best regards,"
+        ✗ "Let me know if you need clarification!"
+        - End cleanly after the last factual statement.
+
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        PART 5: COMMON MISTAKES (WHAT NOT TO DO)
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+        ❌ MISTAKE 1: Confusing medical conditions
+        - Treating heart surgery as cancer because "cancer exclusion" exists
+        - FIX: Use PART 1 to correctly categorize the condition
+
+        ❌ MISTAKE 2: Applying exclusions to wrong conditions  
+        - "No cancer coverage" applied to kidney dialysis query
+        - FIX: Check if exclusion SPECIFICALLY matches the query topic
+
+        ❌ MISTAKE 3: Mentioning irrelevant policies
+        - Discussing travel insurance for a surgery question
+        - FIX: Use STEP 3 to filter policies by relevance
+
+        ❌ MISTAKE 4: Listing all age tiers when user is young
+        - Showing "$5,250 after age 80" to a 24-year-old
+        - FIX: Use STEP 4 to show ONLY the user's current age bracket
+
+        ❌ MISTAKE 5: Citing benefits from riders user doesn't own
+        - "You get 95% deductible coverage" when user has no rider
+        - FIX: Use STEP 5 to verify rider ownership in USER PROFILE
+
+        ❌ MISTAKE 6: Vague dollar amounts
+        - "Your deductible" instead of "Your $3,500 deductible"
+        - FIX: Use STEP 6 to extract exact numbers
+
+        ❌ MISTAKE 7: Confusing coordination of benefits
+        - "CI plan pays the hospital" (wrong - it pays the user)
+        - FIX: Use the logic from PART 1 and STEP 7
+
+        ❌ MISTAKE 8: Missing citations
+        - Stating facts without [Source X] or <USER PROFILE>
+        - FIX: Use STEP 8 to cite every fact
+
+        ❌ MISTAKE 9: Conversational sign-offs
+        - Adding "Hope this helps!" or "Best regards"
+        - FIX: Use STEP 9 - end cleanly after last fact
+
+        ❌ MISTAKE 10: Citing <USER PROFILE> for document facts
+        - "You get $500,000 <USER PROFILE>" (amount is in docs, not profile)
+        - FIX: Profile = ownership/exclusions. Docs = amounts/details.
+
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        NOW ANSWER THE USER'S QUESTION
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+        USER QUERY: {original_query}
+
+        Follow PART 4 (STEP 1 → STEP 9) exactly. Begin your response now:
         """
 
         # Call OpenAI API with streaming
@@ -694,16 +908,11 @@ class QueryProcessor:
                 raise ValueError("OpenAI client is not initialized.")
 
             stream = self.client.chat.completions.create(
-                model="gpt-4-1106-preview",  # Using GPT-4 Turbo for good balance
+                model="gpt-4o",
                 messages=[
                     {
                         "role": "system",
-                        "content": """You are an expert financial advisor who gives clear, practical insurance advice. 
-                        Focus on the most important information from policy documents.
-                        Highlight key coverage amounts, benefits, and limitations.
-                        Compare policies when relevant and explain terms simply.
-                        Make clear recommendations based on the user's situation.
-                        Always cite your sources from the documents."""
+                        "content": "You are an expert financial advisor. Answer insurance questions using the provided document chunks AND the user profile. The user profile, especially underwriting exclusions, is the absolute source of truth and overrides all document chunks.",
                     },
                     {"role": "user", "content": prompt_instructions},
                 ],
@@ -836,7 +1045,7 @@ class QueryProcessor:
 
             if "manulife" in fname_lower:
                 file_key_to_filename["manulife"] = fname
-            elif "supremehealth" in fname_lower:
+            elif "great_supremehealth" in fname_lower:
                 file_key_to_filename["supremehealth"] = fname
             elif "singlife" in fname_lower:
                 file_key_to_filename["singlife"] = fname
@@ -892,11 +1101,15 @@ class QueryProcessor:
                     "plan_context", []
                 )  # e.g., ["GREAT TotalCare", "P PLUS"]
                 content_lower = content.lower()
+                page_heading = metadata.get("page_heading", "").lower()
 
                 # --- 1. ENEMY RIDER PENALTY ---
                 # This is the most important rule.
                 # The user does NOT own "GREAT TotalCare".
-                if "GREAT TotalCare" in chunk_plans:
+                if (
+                    "GREAT TotalCare" in chunk_plans
+                    or "great totalcare" in page_heading
+                ):
                     # This chunk mentions the enemy rider. Penalize it.
                     profile_boost -= 3.0  # Very strong penalty
                     print(
@@ -961,34 +1174,6 @@ class QueryProcessor:
 
         return boosted_results
 
-    def _get_intent_prompt(self, query: str) -> str:
-        """Get the prompt for analyzing query intent"""
-        prompt_text = """Analyze this insurance-related query to determine its intent.
-        
-        Consider carefully:
-        1. Does it ask for comparison with other policies or insurers?
-           - Looking for alternatives
-           - Asking about other companies
-           - Wanting to compare benefits/prices
-           
-        2. Does it ask about features that might not be in user's policy?
-           - New or additional coverage types
-           - Optional riders or add-ons
-           - Coverage upgrades or enhancements
-           
-        3. Does it need external information beyond policy documents?
-           - General insurance concepts
-           - Market rates or trends
-           - Regulatory requirements
-           - Industry standards
-           - Medical/health information
-        
-        Respond with JSON containing these boolean fields:
-        - needs_comparison
-        - asks_about_uncovered_features
-        - requires_external_info"""
-        return f"{prompt_text}\n\nQuery: {query}"
-
     def get_performance_stats(self) -> Dict[str, Any]:
         """Get basic statistics about the search engine state."""
         if self.search_engine:
@@ -1004,7 +1189,7 @@ class QueryProcessor:
         import re
 
         sig_pattern = re.compile(
-            r"(?m)(?:\n|\A)\s*(?:Best regards,|Best Regards,|Regards,|Sincerely,|Kind regards,|Kind Regards,|Yours sincerely,|Yours faithfully,|Thanks,|Thank you,|Thank you for your time,?)\s*(?:\n[^\n]{0,120})?(?:\n[^\n]{0,120})?\s*\Z",
+            r"(?m)(?:\n|\A)\s*(?:Best regards,|Best Regards,|Regards,|Sincerely,|Kind regards,|Kind Regards,|Yours sincerely,|Yours faithfully,|Thanks,|Thank you,|Thank you for your time,?)\s*(?:\n[^\n]{0,120})?(?:\n[^\n]{0,1cm 20})?\s*\Z",
             flags=re.IGNORECASE,
         )
 
