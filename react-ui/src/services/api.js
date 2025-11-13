@@ -440,6 +440,18 @@ export async function getInsurerHistory(customerId) {
 }
 
 /**
+ * (Insurer) Clear chat history for a specific customer.
+ */
+export async function clearInsurerHistory(customerId) {
+  const res = await fetch(`${BASE}/api/insurer/history/${customerId}`, {
+    method: 'DELETE',
+    headers: { ...getAuthHeader() }
+  });
+  if (!res.ok) throw new Error((await res.json()).error);
+  return res.json();
+}
+
+/**
  * (Insurer) Send a query as the insurer for a specific customer.
  */
 export async function sendInsurerQueryStream(customerId, query, onChunk, onComplete, onError) {

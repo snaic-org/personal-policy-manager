@@ -1086,6 +1086,28 @@ def get_insurer_history(customer_id):
         
     return jsonify(history), 200
 
+@app.route("/api/insurer/history/<int:customer_id>", methods=["DELETE"])
+@insurer_required()
+def clear_insurer_history(customer_id):
+    """(Insurer) Clears the chat history for a specific customer."""
+    insurer_id = int(get_jwt_identity())
+    
+    # --- TENANCY CHECK ---
+    customer = db.session.get(User, customer_id)
+    if not customer or customer.created_by_insurer_id != insurer_id:
+        return jsonify({"error": "Customer not found or not managed by you"}), 404
+
+    try:
+        # Delete all messages for this *specific customer*
+        num_deleted = Message.query.filter_by(user_id=customer_id).delete()
+        db.session.commit()
+        
+        return jsonify({"message": f"History cleared for {customer.username}. {num_deleted} messages deleted."}), 200
+        
+    except Exception as e:
+        print(f"Error clearing insurer history: {str(e)}")
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/insurer/delete_files/<int:customer_id>", methods=["POST"])
 @insurer_required()
