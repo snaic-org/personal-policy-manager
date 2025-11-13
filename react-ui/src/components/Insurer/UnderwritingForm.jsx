@@ -1,57 +1,34 @@
-// In react-ui/src/components/Insurer/UnderwritingForm.jsx
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import * as api from '../../services/api';
 
-export default function UnderwritingForm({ customerId }) {
-  const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+export default function UnderwritingForm({ 
+  customerId, 
+  profile: initialProfile,
+  loading, 
+  error, 
+  onDataChanged 
+}) {
+  const [profile, setProfile] = useState(initialProfile);
   const [message, setMessage] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-
-  const fetchProfile = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const data = await api.getInsurerProfile(customerId);
-      if (data.insurance_policies) {
-        for (const filename in data.insurance_policies) {
-          if (!data.insurance_policies[filename].underwriting) {
-            data.insurance_policies[filename].underwriting = {};
-          }
-        }
-      }
-      setProfile(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [customerId]);
-
-  useEffect(() => {
-    fetchProfile();
-  }, [fetchProfile]);
+  
+  React.useEffect(() => {
+    setProfile(initialProfile);
+  }, [initialProfile]);
 
   const handleInputChange = (filename, field, value) => {
     setProfile(prevProfile => {
-      // Start with the existing underwriting data
       const updatedUnderwriting = {
         ...prevProfile.insurance_policies[filename].underwriting,
         [field]: value
       };
-
-      // If the field being changed is 'status' AND the new value is NOT 'approved_with_loading'
       if (field === 'status' && value !== 'approved_with_loading') {
-        // Then automatically clear the premium loading field
         updatedUnderwriting.premium_loading_percent = null;
       }
-
       const updatedPolicy = {
         ...prevProfile.insurance_policies[filename],
-        underwriting: updatedUnderwriting // Use the new underwriting object
+        underwriting: updatedUnderwriting
       };
-
       return {
         ...prevProfile,
         insurance_policies: {
@@ -64,14 +41,16 @@ export default function UnderwritingForm({ customerId }) {
 
   const handleSave = async () => {
     setIsSaving(true);
-    setError('');
+    // setError(''); // Parent handles error
     setMessage('');
     try {
       const res = await api.saveInsurerProfile(customerId, profile);
       setMessage(res.message);
-      fetchProfile();
+      onDataChanged(); // <-- Refresh parent data
     } catch (err) {
-      setError(err.message);
+      // We can still show a local save error
+      setMessage(''); // Clear success message
+      alert(`Save failed: ${err.message}`); // Show error
     } finally {
       setIsSaving(false);
     }
@@ -88,7 +67,7 @@ export default function UnderwritingForm({ customerId }) {
       <h3>Underwriting Details</h3>
       
       {Object.entries(profile.insurance_policies).map(([filename, policy]) => (
-        <div key={filename} style={{ border: '1px solid #ddd', borderRadius: '8px', padding: '20px', marginBottom: '20px' }}>
+         <div key={filename} style={{ border: '1px solid #ddd', borderRadius: '8px', padding: '20px', marginBottom: '20px' }}>
           <h4 style={{ margin: '0 0 16px', borderBottom: '1px solid #eee', paddingBottom: '8px', wordBreak: 'break-all' }}>
             {filename}
           </h4>

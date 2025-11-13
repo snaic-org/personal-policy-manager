@@ -305,6 +305,46 @@ def upload_policies():
         print(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
     
+def _update_profile_on_delete(user: User, deleted_filenames: list[str]):
+    """
+    Loads a user's profile, removes any policy data associated
+    with the deleted filenames, and saves the profile back.
+    """
+    profile_path = _get_user_profile_path(user)
+    if not profile_path.exists():
+        print(f"No profile found for user {user.id}. Skipping profile update.")
+        return
+
+    try:
+        # Load the existing profile
+        with open(profile_path, "r") as f:
+            profile_data = json.load(f)
+
+        # Check for the 'insurance_policies' dictionary
+        if "insurance_policies" in profile_data and isinstance(profile_data["insurance_policies"], dict):
+            
+            # Create a new dictionary, keeping only the policies that *were not* deleted
+            updated_policies = {
+                filename: policy_data
+                for filename, policy_data in profile_data["insurance_policies"].items()
+                if filename not in deleted_filenames
+            }
+            
+            if len(updated_policies) < len(profile_data["insurance_policies"]):
+                print(f"Profile updated: Removed {len(profile_data['insurance_policies']) - len(updated_policies)} policy entries.")
+                profile_data["insurance_policies"] = updated_policies
+                
+                # Write the updated profile back to the file
+                with open(profile_path, "w") as f:
+                    json.dump(profile_data, f, indent=2)
+            else:
+                print("No matching policies found in profile for deleted files.")
+        
+    except Exception as e:
+        # Log the error but don't fail the deletion process
+        print(f"Warning: Failed to update user profile for user {user.id} after file deletion: {e}")
+        print(traceback.format_exc())
+    
 @app.route('/delete_files', methods=['POST'])
 @jwt_required()
 def delete_files():
@@ -346,7 +386,9 @@ def delete_files():
 
         if deleted_count == 0:
             return jsonify({"error": "No valid files were found to delete"}), 404
-
+        
+        if deleted_files_list:
+            _update_profile_on_delete(user, deleted_files_list)
 
         # 2. Re-process the batch *once*
         # Find all *remaining* document files
@@ -1148,6 +1190,9 @@ def delete_files_for_customer(customer_id):
         
     if deleted_count == 0:
         return jsonify({"error": "No valid files were found to delete"}), 404
+    
+    if deleted_files_list:
+        _update_profile_on_delete(customer, deleted_files_list)
 
     # Re-process the batch
     document_files = []

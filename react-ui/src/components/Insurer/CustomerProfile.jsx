@@ -1,49 +1,27 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React from 'react';
 import * as api from '../../services/api.js';
 import CustomerProfileForm from './CustomerProfileForm';
 import CustomerPolicyInfo from './CustomerPolicyInfo';
 
 /**
  * This component wraps the two new forms in the "Profile" tab
- * for the insurer view. It handles fetching the profile and
- * file data once and passes it down.
+ * for the insurer view. It receives data from its parent
+ * (CustomerDashboard) and passes it down.
  */
-export default function CustomerProfile({ customerId }) {
-  const [profile, setProfile] = useState(null);
-  const [files, setFiles] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-
-  // Fetches all data needed for this tab
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const [profileData, filesData] = await Promise.all([
-        api.getInsurerProfile(customerId),
-        api.getInsurerCustomerFiles(customerId)
-      ]);
-      
-      setProfile(profileData);
-      setFiles(filesData.files || []);
-      
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [customerId]);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  // This function will be called by the child forms when they save
+export default function CustomerProfile({ 
+  customerId, 
+  profile, 
+  files, 
+  loading, 
+  error, 
+  onDataChanged 
+}) {
+  
+  // This function is passed to the children forms
   const handleProfileUpdate = async (updatedProfileData) => {
     try {
       await api.saveInsurerProfile(customerId, updatedProfileData);
-      // Refetch the data to ensure consistency
-      await fetchData(); 
+      onDataChanged(); // <-- Call parent's refresh function
       return { success: true };
     } catch (e) {
       console.error("Failed to save profile:", e);
@@ -60,15 +38,15 @@ export default function CustomerProfile({ customerId }) {
       {/* Pass the profile data and the save handler to the form */}
       <CustomerProfileForm
         customerId={customerId}
-        initialProfile={profile}
+        initialProfile={profile} // <-- From props
         onSave={handleProfileUpdate}
       />
       
       {/* Pass profile, files, and save handler to the policy info form */}
       <CustomerPolicyInfo
         customerId={customerId}
-        initialProfile={profile}
-        customerFiles={files}
+        initialProfile={profile} // <-- From props
+        customerFiles={files}    // <-- From props
         onSave={handleProfileUpdate}
       />
     </div>

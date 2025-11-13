@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import * as api from '../../services/api';
 import FileDropzone from '../FileDropzone';
-import FileDisplayList from '../FileDisplayList'; // <-- Import the new list component
+import FileDisplayList from '../FileDisplayList';
 
-export default function CustomerDocuments({ customerId }) {
+export default function CustomerDocuments({ customerId, files, onDataChanged }) {
   // State for the file list
-  const [files, setFiles] = useState([]);
-  const [listLoading, setListLoading] = useState(true);
-  const [listError, setListError] = useState(null);
+  // const [files, setFiles] = useState([]);
+  // const [listLoading, setListLoading] = useState(true);
+  // const [listError, setListError] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
   // State for the new upload
@@ -16,22 +16,22 @@ export default function CustomerDocuments({ customerId }) {
   const [uploadMessage, setUploadMessage] = useState('');
   const [uploadError, setUploadError] = useState(null);
 
-  const fetchFiles = async () => {
-    setListLoading(true);
-    setListError(null);
-    try {
-      const res = await api.getInsurerCustomerFiles(customerId);
-      setFiles(res.files || []);
-    } catch (err) {
-      setListError(err.message);
-    } finally {
-      setListLoading(false);
-    }
-  };
+  // const fetchFiles = async () => {
+  //   setListLoading(true);
+  //   setListError(null);
+  //   try {
+  //     const res = await api.getInsurerCustomerFiles(customerId);
+  //     setFiles(res.files || []);
+  //   } catch (err) {
+  //     setListError(err.message);
+  //   } finally {
+  //     setListLoading(false);
+  //   }
+  // };
 
-  useEffect(() => {
-    fetchFiles();
-  }, [customerId]);
+  // useEffect(() => {
+  //   fetchFiles();
+  // }, [customerId]);
 
   // --- Upload Handlers ---
   const handleFilesSelected = (selected) => {
@@ -49,7 +49,7 @@ export default function CustomerDocuments({ customerId }) {
       const res = await api.uploadForCustomer(customerId, uploadFiles);
       setUploadMessage(res.message);
       setUploadFiles([]);
-      fetchFiles(); // Refresh file list
+      onDataChanged(); // <-- Refresh parent data
     } catch (err) {
       setUploadError(err.message);
     } finally {
@@ -63,12 +63,12 @@ export default function CustomerDocuments({ customerId }) {
     if (!window.confirm(`Delete ${filesToDelete.length} file(s) for this customer?`)) return;
     
     setIsDeleting(true);
-    setListError(null);
+    // setListError(null);
     try {
       await api.deleteForCustomer(customerId, filesToDelete);
-      fetchFiles(); // Refresh file list
+      onDataChanged(); // Refresh parent data
     } catch (err) {
-      setListError(err.message);
+      setUploadError(err.message);
     } finally {
       setIsDeleting(false);
     }
@@ -113,9 +113,9 @@ export default function CustomerDocuments({ customerId }) {
       <div style={{ borderTop: '1px solid #e0e0e0', paddingTop: '16px' }}>
         <FileDisplayList
           title="Uploaded Files for Customer"
-          files={files}
-          loading={listLoading}
-          error={listError}
+          files={files} // <-- From props
+          loading={false} // Loading is handled by parent
+          error={null}    // Error is handled by parent
           isDeleting={isDeleting}
           emptyListMessage="No files uploaded for this customer."
           onDelete={handleListDelete}
