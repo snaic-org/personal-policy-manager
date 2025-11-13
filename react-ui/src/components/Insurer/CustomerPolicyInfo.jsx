@@ -240,7 +240,14 @@ export default function CustomerPolicyInfo({ customerId, initialProfile, custome
                 <button 
                   onClick={() => handleAddRider(filename)} 
                   className="btn secondary"
-                  style={{ width: '100%', height: '36px', fontSize: '14px', minHeight: '36px' }}
+                  style={{ 
+                    width: '100%', 
+                    height: '36px', 
+                    fontSize: '14px', 
+                    minHeight: '36px',
+                    padding: '0 24px',      // Reset vertical padding
+                    lineHeight: '36px'    // Center text vertically
+                  }}
                 >
                   + Add Rider
                 </button>

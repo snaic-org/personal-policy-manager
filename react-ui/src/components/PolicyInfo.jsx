@@ -82,7 +82,6 @@ export default function PolicyInfo({ refreshTrigger }) {
   // Handles changes for fields inside a rider
   const handleRiderChange = (filename, riderIndex, field, value) => {
     setLocalPolicies(prevPolicies => {
-      // --- FIX: Add safety check for undefined riders ---
       const updatedRiders = [...(prevPolicies[filename].riders || [])];
       updatedRiders[riderIndex] = {
         ...updatedRiders[riderIndex],
@@ -105,7 +104,6 @@ export default function PolicyInfo({ refreshTrigger }) {
       ...prevPolicies,
       [filename]: {
         ...prevPolicies[filename],
-        // --- FIX: Add safety check for undefined riders ---
         riders: [
           ...(prevPolicies[filename].riders || []),
           { plan_name: "", tier: "" } // New empty rider
@@ -120,7 +118,6 @@ export default function PolicyInfo({ refreshTrigger }) {
       ...prevPolicies,
       [filename]: {
         ...prevPolicies[filename],
-        // --- FIX: Add safety check for undefined riders ---
         riders: (prevPolicies[filename].riders || []).filter((_, index) => index !== riderIndex)
       }
     }));
@@ -259,7 +256,14 @@ export default function PolicyInfo({ refreshTrigger }) {
                 <button 
                   onClick={() => handleAddRider(filename)} 
                   className="btn secondary"
-                  style={{ width: '100%', height: '36px', fontSize: '14px', minHeight: '36px' }}
+                  style={{ 
+                    width: '100%', 
+                    height: '36px', 
+                    fontSize: '14px', 
+                    minHeight: '36px',
+                    padding: '0 24px',      // Reset vertical padding
+                    lineHeight: '36px'    // Center text vertically
+                  }}
                 >
                   + Add Rider
                 </button>
