@@ -1,10 +1,14 @@
 import React from 'react';
 import Upload from './Upload';
 import UploadedFiles from './UploadedFiles';
-import ProfileForm from './ProfileForm';
-import PolicyTiers from './PolicyTiers';
 
-export default function Sidebar({ user, onUploadSuccess, refreshTrigger }) {
+export default function Sidebar({ 
+  user, 
+  onUploadSuccess, 
+  refreshTrigger,
+  activeTab,
+  onTabChange
+}) {
   return (
     <aside className="sidebar">
       {/* User info section at the top */}
@@ -17,6 +21,24 @@ export default function Sidebar({ user, onUploadSuccess, refreshTrigger }) {
         </h3>
       </div>
 
+      {/* --- Tab Navigation --- */}
+      <div className="sidebar-nav">
+        <button
+          className={`sidebar-nav-btn ${activeTab === 'chat' ? 'active' : ''}`}
+          onClick={() => onTabChange('chat')}
+        >
+          Chat
+        </button>
+        <button
+          className={`sidebar-nav-btn ${activeTab === 'profile' ? 'active' : ''}`}
+          onClick={() => onTabChange('profile')}
+        >
+          My Profile & Policies
+        </button>
+      </div>
+      {/* --- Tab Navigation --- */}
+
+
       {/* This part will scroll if content is long */}
       <div className="sidebar-content">
         <Upload onUploadSuccess={onUploadSuccess} />
@@ -24,8 +46,6 @@ export default function Sidebar({ user, onUploadSuccess, refreshTrigger }) {
             refreshTrigger={refreshTrigger}
             onFileChange={onUploadSuccess}
         />
-        <ProfileForm />
-        <PolicyTiers refreshTrigger={refreshTrigger} />
       </div>
     </aside>
   );

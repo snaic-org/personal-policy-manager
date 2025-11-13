@@ -1,26 +1,36 @@
 import React, { useState, useEffect } from 'react';
-import Chat from './components/Chat';
 import Auth from './components/Auth';
-import Sidebar from './components/Sidebar';
+import CustomerLayout from './components/CustomerLayout';
+import InsurerLayout from './components/InsurerLayout';
 import { logout, getUserInfo } from './services/api';
+
+// Helper to get role from stored token
+const getRoleFromToken = () => {
+  const token = localStorage.getItem('token');
+  if (!token) return null;
+  try {
+    const claims = JSON.parse(atob(token.split('.')[1]));
+    return claims.role;
+  } catch (e) {
+    return null;
+  }
+};
 
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
-  const [refresh, setRefresh] = useState(false);
+  const [role, setRole] = useState(getRoleFromToken()); // Get role on load
   const [user, setUser] = useState(null);
 
-  const handleLogin = (newToken) => {
-    setToken(newToken);
+  const handleLogin = (loginData) => { // loginData is { token, role }
+    setToken(loginData.access_token);
+    setRole(loginData.role);
   };
 
   const handleLogout = () => {
     logout();
     setToken(null);
-    setUser(null); // Clear user info on logout
-  };
-  
-  const handleUploadSuccess = () => {
-    setRefresh(prev => !prev); // triggers UploadedFiles to re-fetch
+    setRole(null);
+    setUser(null);
   };
 
   // Fetch user info when token is available
@@ -37,33 +47,35 @@ export default function App() {
     }
   }, [token]); // Re-run this effect if the token changes
 
+  const renderLayout = () => {
+    if (!token || !role) {
+      return <Auth onLogin={handleLogin} />;
+    }
+
+    if (role === 'customer') {
+      return <CustomerLayout user={user} onLogout={handleLogout} />;
+    }
+
+    if (role === 'insurer') {
+      return <InsurerLayout user={user} onLogout={handleLogout} />;
+    }
+
+    return <Auth onLogin={handleLogin} />; // Fallback
+  };
+
   return (
-    // This is the main container for the whole app
     <div className="app-container">
       <header className="app-header">
-        <h2>Personal Policy Manager</h2>
+        <h2>{role === 'insurer' ? 'Insurer Policy Manager' : 'Personal Policy Manager'}</h2>
         {token && (
           <button onClick={handleLogout} className="logout-button-header">
             Logout
           </button>
         )}
       </header>
-      
+
       <div className="app-main-content">
-        {token ? (
-          <div className="app-layout">
-            <Sidebar
-              user={user}
-              onUploadSuccess={handleUploadSuccess}
-              refreshTrigger={refresh}
-            />
-            <Chat 
-              onUploadSuccess={handleUploadSuccess} 
-            />
-          </div>
-        ) : (
-          <Auth onLogin={handleLogin} />
-        )}
+        {renderLayout()}
       </div>
     </div>
   );

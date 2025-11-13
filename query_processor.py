@@ -17,6 +17,7 @@ from openai import OpenAI
 
 from batch_manager import BatchManager
 from utils.search import HybridSearchEngine
+from research import DeepResearch
 
 
 class QueryProcessor:
@@ -97,9 +98,24 @@ class QueryProcessor:
             return results
 
         owned_policies = set(user_profile["policies_owned"])
-        # (This function appears incomplete in the original, but leaving as-is)
-        # Note: This function is not actually called. The logic is in _filter_and_rerank_by_profile
-        return results
+        if not owned_policies:
+            print(
+                "Warning: 'policies_owned' list is empty in profile. Returning all results."
+            )
+            return results
+
+        filtered_results = []
+        for result in results:
+            # Ensure metadata and filename exist before checking
+            metadata = result.get("metadata", {})
+            filename = metadata.get("filename")
+            if filename and filename in owned_policies:
+                filtered_results.append(result)
+
+        print(
+            f"Filtered results to {len(filtered_results)} chunks based on {len(owned_policies)} owned policies."
+        )
+        return filtered_results
 
     def _expand_query(self, query: str) -> str:
         """
@@ -205,10 +221,12 @@ class QueryProcessor:
             print(f"\nProcessing query for batch: {target_batch}")
             print(f"Query: {query}")
 
+            # Expand query 
             expanded_query = self._expand_query(query)
+            # expanded_query = ' '.join(expanded_query.split()[:20])  # Limit to 20 terms
 
             raw_search_results = self.search_engine.hybrid_search(
-                query=expanded_query, top_k=50  # Use the expanded query
+                query=expanded_query, top_k=50  # Use top_k = 20 to limit context size
             )
             print(
                 f"Retrieved {len(raw_search_results)} raw results from hybrid search."
@@ -378,7 +396,7 @@ class QueryProcessor:
                 raise ValueError("OpenAI client is not initialized.")
 
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-4o",  # use gpt-3.5-turbo for cheaper model
                 messages=[
                     {
                         "role": "system",
@@ -424,14 +442,28 @@ class QueryProcessor:
             print(f"\nProcessing query for batch: {target_batch}")
             print(f"Query: {query}")
 
-            expanded_query = self._expand_query(query)
+            # Analyze query intent ---- for deep research part
+            # try:
+            #     intent_response = self.client.chat.completions.create(
+            #         model="gpt-4o",  # gpt-3.5-turbo for cheaper model
+            #         messages=[{"role": "user", "content": self._get_intent_prompt(query)}],
+            #         response_format={"type": "json_object"},
+            #         temperature=0.1
+            #     )
+            #     intent = json.loads(intent_response.choices[0].message.content)
+            # except Exception as e:
+            #     print(f"Error analyzing intent: {e}")
+            #     intent = {
+            #         "needs_comparison": False,
+            #         "asks_about_uncovered_features": False,
+            #         "requires_external_info": False
+            #     }
 
+            expanded_query = self._expand_query(query)
             raw_search_results = self.search_engine.hybrid_search(
                 query=expanded_query, top_k=50
             )
-            print(
-                f"Retrieved {len(raw_search_results)} raw results from hybrid search."
-            )
+            print(f"Retrieved {len(raw_search_results)} raw results from hybrid search.")
 
             is_personal_batch = target_batch.startswith("user_")
 
@@ -442,6 +474,15 @@ class QueryProcessor:
                 f"Retained {len(unique_results)} unique relevant chunks after filtering/deduplication."
             )
 
+            # Determine if we need deep research
+            # needs_research = (
+            #     intent["needs_comparison"] or
+            #     intent["asks_about_uncovered_features"] or
+            #     intent["requires_external_info"] or
+            #     len(unique_results) == 0
+            # )
+
+            # if not unique_results and not needs_research:
             if not unique_results:
                 if is_personal_batch:
                     error_msg = f"I couldn't find relevant information in your uploaded documents for the question: '{query}'."
@@ -495,6 +536,7 @@ class QueryProcessor:
 
             processing_time = time.time() - start_time
             print(f"Total processing time: {processing_time:.2f}s")
+            # yield "data: " + json.dumps({"done": True}) + "\n\n"
 
         except Exception as e:
             import traceback
@@ -652,11 +694,16 @@ class QueryProcessor:
                 raise ValueError("OpenAI client is not initialized.")
 
             stream = self.client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-4-1106-preview",  # Using GPT-4 Turbo for good balance
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an expert financial advisor. Answer insurance questions using the provided document chunks, with proper citations. Always include specific coverage amounts when available in the documents. Understand that insurance terminology can have equivalent meanings (e.g., 'rental vehicle excess' = 'collision damage waiver'). Always personalize responses based on the user's specific policy tiers when available.",
+                        "content": """You are an expert financial advisor who gives clear, practical insurance advice. 
+                        Focus on the most important information from policy documents.
+                        Highlight key coverage amounts, benefits, and limitations.
+                        Compare policies when relevant and explain terms simply.
+                        Make clear recommendations based on the user's situation.
+                        Always cite your sources from the documents."""
                     },
                     {"role": "user", "content": prompt_instructions},
                 ],
@@ -913,6 +960,34 @@ class QueryProcessor:
         print("-------------------------\n")
 
         return boosted_results
+
+    def _get_intent_prompt(self, query: str) -> str:
+        """Get the prompt for analyzing query intent"""
+        prompt_text = """Analyze this insurance-related query to determine its intent.
+        
+        Consider carefully:
+        1. Does it ask for comparison with other policies or insurers?
+           - Looking for alternatives
+           - Asking about other companies
+           - Wanting to compare benefits/prices
+           
+        2. Does it ask about features that might not be in user's policy?
+           - New or additional coverage types
+           - Optional riders or add-ons
+           - Coverage upgrades or enhancements
+           
+        3. Does it need external information beyond policy documents?
+           - General insurance concepts
+           - Market rates or trends
+           - Regulatory requirements
+           - Industry standards
+           - Medical/health information
+        
+        Respond with JSON containing these boolean fields:
+        - needs_comparison
+        - asks_about_uncovered_features
+        - requires_external_info"""
+        return f"{prompt_text}\n\nQuery: {query}"
 
     def get_performance_stats(self) -> Dict[str, Any]:
         """Get basic statistics about the search engine state."""

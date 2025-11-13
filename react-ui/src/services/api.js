@@ -1,5 +1,13 @@
 const BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
+function parseJwt(token) {
+  try {
+    return JSON.parse(atob(token.split('.')[1]));
+  } catch (e) {
+    return null;
+  }
+}
+
 // --- Auth Functions ---
 
 export async function login(username, password) {
@@ -14,16 +22,32 @@ export async function login(username, password) {
     throw new Error(err.error || `HTTP ${res.status}`);
   }
 
-  const data = await res.json();
+  const data = await res.json(); // data will be { access_token, role }
   localStorage.setItem('token', data.access_token);
-  return data.access_token;
+  
+  return data; // Returns { access_token, role }
 }
 
+// Customer Registration
 export async function register(username, password, passwordConfirm) {
   const res = await fetch(`${BASE}/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password, passwordConfirm })
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function registerInsurer(username, password, passwordConfirm, inviteCode) {
+  const res = await fetch(`${BASE}/register/insurer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password, passwordConfirm, inviteCode })
   });
 
   if (!res.ok) {
@@ -167,6 +191,22 @@ export async function downloadFile(filename) {
     
     return res.json(); // returns [{ role: 'user', content: '...' }, ...]
   }
+
+  export async function clearHistory() {
+    const res = await fetch(`${BASE}/history`, {
+      method: 'DELETE',
+      headers: {
+        ...getAuthHeader()
+      }
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+
+    return res.json();
+  }
   
   export async function sendQuery(query) {
     const body = { query };
@@ -305,4 +345,191 @@ export async function saveProfile(profileData) {
   }
 
   return res.json(); // returns { message: "..." }
+}
+
+// --- Insurer Functions ---
+/**
+ * (Insurer) Get all customers managed by this insurer.
+ */
+export async function getInsurerCustomers() {
+  const res = await fetch(`${BASE}/api/insurer/customers`, {
+    method: 'GET',
+    headers: { ...getAuthHeader() }
+  });
+  if (!res.ok) throw new Error((await res.json()).error);
+  return res.json(); // Returns [{ id: 1, username: 'customer_a' }, ...]
+}
+
+/**
+ * (Insurer) Create a new customer.
+ */
+export async function createCustomer(username) {
+  const res = await fetch(`${BASE}/api/insurer/customers`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeader()
+    },
+    body: JSON.stringify({ username })
+  });
+  if (!res.ok) throw new Error((await res.json()).error);
+  return res.json(); // Returns { message, customer_id, username, password }
+}
+
+/**
+ * (Insurer) Get the file list for a specific customer.
+ */
+export async function getInsurerCustomerFiles(customerId) {
+  const res = await fetch(`${BASE}/api/insurer/list_files/${customerId}`, {
+    // Note: This endpoint needs to be created in main.py
+    // It should be an @insurer_required endpoint that proxies
+    // the logic of /list_files for a specific user.
+    method: 'GET',
+    headers: { ...getAuthHeader() }
+  });
+  if (!res.ok) throw new Error((await res.json()).error);
+  return res.json(); // Returns { files: ["a.pdf", "b.docx"] }
+}
+
+/**
+ * (Insurer) Upload policies for a specific customer.
+ */
+export async function uploadForCustomer(customerId, files) {
+  const formData = new FormData();
+  files.forEach(file => {
+    formData.append('files', file);
+  });
+  
+  const res = await fetch(`${BASE}/api/insurer/upload/${customerId}`, {
+    method: 'POST',
+    headers: { ...getAuthHeader() },
+    body: formData
+  });
+  if (!res.ok) throw new Error((await res.json()).error);
+  return res.json();
+}
+
+/**
+ * (Insurer) Delete policies for a specific customer.
+ */
+export async function deleteForCustomer(customerId, filenames) {
+  const res = await fetch(`${BASE}/api/insurer/delete_files/${customerId}`, {
+    // Note: This endpoint also needs to be created in main.py
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeader()
+    },
+    body: JSON.stringify({ filenames })
+  });
+  if (!res.ok) throw new Error((await res.json()).error);
+  return res.json();
+}
+
+/**
+ * (Insurer) Get chat history for a specific customer.
+ */
+export async function getInsurerHistory(customerId) {
+  const res = await fetch(`${BASE}/api/insurer/history/${customerId}`, {
+    // Note: This endpoint needs to be created in main.py
+    method: 'GET',
+    headers: { ...getAuthHeader() }
+  });
+  if (!res.ok) throw new Error((await res.json()).error);
+  return res.json();
+}
+
+/**
+ * (Insurer) Clear chat history for a specific customer.
+ */
+export async function clearInsurerHistory(customerId) {
+  const res = await fetch(`${BASE}/api/insurer/history/${customerId}`, {
+    method: 'DELETE',
+    headers: { ...getAuthHeader() }
+  });
+  if (!res.ok) throw new Error((await res.json()).error);
+  return res.json();
+}
+
+/**
+ * (Insurer) Send a query as the insurer for a specific customer.
+ */
+export async function sendInsurerQueryStream(customerId, query, onChunk, onComplete, onError) {
+  const body = { query };
+  try {
+    const res = await fetch(`${BASE}/api/insurer/query/stream/${customerId}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader()
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+
+    // ... (rest of the stream reading logic from your existing sendQueryStream) ...
+    // This logic can be copy-pasted directly from your api.js
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.substring(6));
+            if (data.error) {
+              onError(new Error(data.error));
+              return;
+            }
+            if (data.content) onChunk(data.content);
+            if (data.done) {
+              onComplete();
+              return;
+            }
+          } catch (e) { console.error('Error parsing SSE data:', e); }
+        }
+      }
+    }
+    onComplete();
+  } catch (e) {
+    onError(e);
+  }
+}
+
+/**
+ * (Insurer) Get the profile for a specific customer.
+ */
+export async function getInsurerProfile(customerId) {
+  const res = await fetch(`${BASE}/api/insurer/profile/${customerId}`, {
+    method: 'GET',
+    headers: { ...getAuthHeader() }
+  });
+  if (!res.ok) throw new Error((await res.json()).error);
+  return res.json();
+}
+
+/**
+ * (Insurer) Save the profile for a specific customer.
+ */
+export async function saveInsurerProfile(customerId, profileData) {
+  const res = await fetch(`${BASE}/api/insurer/profile/${customerId}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeader()
+    },
+    body: JSON.stringify(profileData)
+  });
+  if (!res.ok) throw new Error((await res.json()).error);
+  return res.json();
 }

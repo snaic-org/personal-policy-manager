@@ -1,16 +1,15 @@
 import React, { useState } from 'react';
 import { uploadPolicies } from '../services/api';
+import FileDropzone from './FileDropzone';
 
 export default function Upload({ onUploadSuccess }) {
-  const [files, setFiles] = useState([]);
+  const [files, setFiles] = useState([]); // <-- This is passed to the dropzone
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [isDragging, setIsDragging] = useState(false); // <-- ADDED: State for drag UI
 
-  const handleFileChange = (e) => {
-    const chosenFiles = Array.from(e.target.files);
-    setFiles(chosenFiles);
+  const handleFilesSelected = (selected) => {
+    setFiles(selected);
     setMessage('');
     setError('');
   };
@@ -31,74 +30,18 @@ export default function Upload({ onUploadSuccess }) {
       setError(e.message);
     } finally {
       setLoading(false);
-      setFiles([]);
-      if (document.getElementById('file-input')) {
-        document.getElementById('file-input').value = null;
-      }
+      setFiles([]); // <-- This will trigger the dropzone to reset
     }
   };
-
-  // --- START: NEW DRAG-AND-DROP HANDLERS ---
-  const handleDragOver = (e) => {
-    e.preventDefault(); // Prevent browser from opening file
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault(); // Prevent browser from opening file
-    setIsDragging(false);
-    
-    const droppedFiles = Array.from(e.dataTransfer.files);
-    if (droppedFiles.length === 0) return;
-
-    // Optional: Filter files by accepted types
-    const acceptedTypes = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain', 'text/markdown'];
-    const validFiles = droppedFiles.filter(file => 
-      acceptedTypes.includes(file.type) || 
-      file.name.endsWith('.pdf') || 
-      file.name.endsWith('.docx') || 
-      file.name.endsWith('.txt') || 
-      file.name.endsWith('.md')
-    );
-
-    setFiles(validFiles);
-    setMessage('');
-    setError('');
-  };
-  // --- END: NEW DRAG-AND-DROP HANDLERS ---
 
   return (
     <div className="upload-container">
       <h4>Upload Your Policies</h4>
       
-      <label 
-        htmlFor="file-input" 
-        className={`file-drop-zone ${files.length > 0 ? 'has-files' : ''} ${isDragging ? 'is-dragging' : ''}`}
-        onDragOver={handleDragOver}   // <-- ADDED
-        onDragLeave={handleDragLeave} // <-- ADDED
-        onDrop={handleDrop}           // <-- ADDED
-      >
-        {isDragging ? (
-          <span>Drop files here...</span>
-        ) : files.length === 0 ? (
-          <span>Drag & drop files, or click to select</span>
-        ) : (
-          <span>{files.length} file(s) selected</span>
-        )}
-      </label>
-      
-      <input
-        id="file-input"
-        type="file" 
-        multiple 
-        onChange={handleFileChange} 
-        accept=".pdf,.docx,.txt,.md"
-        style={{ display: 'none' }} // hide actual input
+      <FileDropzone
+        id="global-file-input"
+        onFilesSelected={handleFilesSelected}
+        selectedFiles={files}
       />
 
       {files.length > 0 && (
