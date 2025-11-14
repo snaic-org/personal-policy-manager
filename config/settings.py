@@ -1,3 +1,5 @@
+# config/settings.py
+
 """
 Configuration Settings
 Manages application configuration and environment variables.
@@ -10,6 +12,7 @@ load_dotenv()
 import os
 from pathlib import Path
 from typing import Dict, Any
+
 
 class Settings:
     """Application settings."""
@@ -65,8 +68,9 @@ class Settings:
             "embedding_model": self.embedding_model,
             "embedding_dimension": self.embedding_dimension,
             "max_context_length": self.max_context_length,
-            "response_model": self.response_model
+            "response_model": self.response_model,
         }
+
 
 # Global settings instance
 settings = Settings()

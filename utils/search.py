@@ -1,3 +1,5 @@
+# utils/search.py
+
 """
 Search Components
 Handles FAISS and BM25 search indexing and querying.
