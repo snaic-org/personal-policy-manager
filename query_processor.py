@@ -6,7 +6,7 @@ Loads user profile for personalized responses within specific batches (e.g., 'my
 * This is the "Comprehensive" version that relies on the detailed user_profile.json
 * to provide facts and uses the document chunks only for citation.
 """
-
+import asyncio
 import json
 import os
 import time
@@ -17,6 +17,7 @@ from openai import OpenAI
 
 from batch_manager import BatchManager
 from utils.search import HybridSearchEngine
+from src.intent_analyzer import IntentAnalyzer
 
 
 class QueryProcessor:
@@ -195,7 +196,7 @@ class QueryProcessor:
             """
 
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-4o-mini",
                 messages=[{"role": "user", "content": expansion_prompt}],
                 max_tokens=150,
                 temperature=0.1,
@@ -362,8 +363,7 @@ class QueryProcessor:
             profile_info = "\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n- No user profile provided.\n"
 
         salutation = f"Hi {user_name.split()[0] if user_name != 'User' else 'Hi'},"
-
-        # --- NEW V7 PROMPT ---
+        
         prompt_instructions = f"""You are an expert financial advisor specializing in insurance policy analysis.
         Your task is to answer the user's question with extreme precision, relevance, and personalization.
 
@@ -472,6 +472,11 @@ class QueryProcessor:
             print(f"\nProcessing query for batch: {target_batch}")
             print(f"Query: {query}")
 
+            # Analyze intent
+            self.intent_analyzer = IntentAnalyzer()
+            intent = self.intent_analyzer.analyze(query)
+            print(intent)
+
             expanded_query = self._expand_query(query)
 
             raw_search_results = self.search_engine.hybrid_search(
@@ -488,8 +493,18 @@ class QueryProcessor:
             )
             print(
                 f"Retained {len(unique_results)} unique relevant chunks after filtering/deduplication."
+                # "\n Content in unique_results:", unique_results
             )
 
+            # Determine if we need deep research
+            needs_research = (
+                intent["needs_comparison"] or
+                intent["asks_about_uncovered_features"] or
+                intent["requires_external_info"] or
+                len(unique_results) == 0
+            )
+
+            # if not unique_results and not needs_research:
             if not unique_results:
                 if is_personal_batch:
                     error_msg = f"I couldn't find relevant information in your uploaded documents for the question: '{query}'."
@@ -499,6 +514,49 @@ class QueryProcessor:
                     {"content": error_msg, "done": True}
                 ) + "\n\n"
                 return
+            
+            # deep research with UI 
+            # If intent requires deep research → SKIP normal RAG flow
+            if needs_research:
+                start_research_time = time.time()
+                print("Starting deep research streaming response...")
+                
+                from src.run_ui import run_ui
+
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+                try:
+                    async_gen = run_ui(query, intent, unique_results).__aiter__()
+
+                    while True:
+                        try:
+                            chunk = loop.run_until_complete(async_gen.__anext__())
+                            yield "data: " + json.dumps(chunk) + "\n\n"
+                        except StopAsyncIteration:
+                            break
+
+                finally:
+                    loop.close()
+                    
+                end_research_time = time.time()
+                print(f"Total deep research processing time: {end_research_time - start_research_time:.2f}s")
+                    
+                # Signal that the stream is finished
+                yield "data: " + json.dumps({"done": True}) + "\n\n"
+                print("Finished streaming deep research response.")
+
+                return  # ← CRITICAL: prevents normal RAG stream from running
+
+
+
+            # NORMAL RAG streaming
+            if unique_results:
+                for chunk in self._generate_response_stream(
+                    query, unique_results, is_personal_batch, user_profile
+                ):
+                    yield chunk
+
 
             # --- START: FIX FOR ASYNC/SYNC ERROR ---
 
@@ -963,6 +1021,16 @@ class QueryProcessor:
         final safety net to avoid returning 'Best regards, [Name]' style closings.
         """
         import re
+    def _get_research_objectives(self, intent: Dict[str, bool]) -> str:
+        objectives = []
+        if intent["needs_comparison"]:
+            objectives.append("- Compare with similar policies from other insurers")
+        if intent["asks_about_uncovered_features"]:
+            objectives.append("- Find alternative policies that might cover these features")
+        if intent["requires_external_info"]:
+            objectives.append("- Research general information about this topic")
+        
+        return "\n".join(objectives) if objectives else "- Provide relevant insurance information"
 
         sig_pattern = re.compile(
             r"(?m)(?:\n|\A)\s*(?:Best regards,|Best Regards,|Regards,|Sincerely,|Kind regards,|Kind Regards,|Yours sincerely,|Yours faithfully,|Thanks,|Thank you,|Thank you for your time,?)\s*(?:\n[^\n]{0,120})?(?:\n[^\n]{0,120})?\s*\Z",

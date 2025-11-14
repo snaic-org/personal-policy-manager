@@ -273,11 +273,26 @@ export async function downloadFile(filename) {
                 onError(new Error(data.error));
                 return;
               }
-  
+
+              let contentChunk = null;
+
               if (data.content) {
-                onChunk(data.content);
+                // 1. Handle normal RAG content
+                contentChunk = data.content;
+              } else if (data.report) {
+                // 2. Handle deep research 'report'
+                contentChunk = data.report;
+              } else if (data.answer) {
+                // 3. Handle deep research 'answer'
+                contentChunk = data.answer;
               }
-  
+
+              // Send the chunk if we found one
+              if (contentChunk) {
+                onChunk(contentChunk);
+              }
+              
+              // Handle 'done' signal
               if (data.done) {
                 onComplete();
                 return;
@@ -471,8 +486,6 @@ export async function sendInsurerQueryStream(customerId, query, onChunk, onCompl
       throw new Error(err.error || `HTTP ${res.status}`);
     }
 
-    // ... (rest of the stream reading logic from your existing sendQueryStream) ...
-    // This logic can be copy-pasted directly from your api.js
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -491,11 +504,46 @@ export async function sendInsurerQueryStream(customerId, query, onChunk, onCompl
               onError(new Error(data.error));
               return;
             }
-            if (data.content) onChunk(data.content);
+
+            let contentChunk = null;
+
+            if (data.content) {
+              // 1. Handle normal RAG content
+              contentChunk = data.content;
+            } else if (data.report) {
+              // 2. Handle deep research 'report'
+              contentChunk = data.report;
+            } else if (data.answer) {
+              // 3. Handle deep research 'answer'
+              contentChunk = data.answer;
+            } else if (data.info) {
+              // 4. Handle 'info' messages
+              contentChunk = `[Info: ${data.info}]\n`;
+            } else if (data.warning) {
+              // 5. Handle 'warning' messages
+              contentChunk = `[Warning: ${data.warning}]\n`;
+            } else if (data.followup_questions && data.followup_questions.length > 0) {
+              // 6. Handle follow-up questions
+              const questions = data.followup_questions.map(q => `- ${q}`).join('\n');
+              contentChunk = `I have some follow-up questions:\n${questions}\n`;
+            }
+
+            // Send the chunk if we found one
+            if (contentChunk) {
+              onChunk(contentChunk);
+            }
+            
+            // 7. Handle 'done' signal
             if (data.done) {
               onComplete();
               return;
             }
+            
+            // if (data.content) onChunk(data.content);
+            // if (data.done) {
+            //   onComplete();
+            //   return;
+            // }
           } catch (e) { console.error('Error parsing SSE data:', e); }
         }
       }

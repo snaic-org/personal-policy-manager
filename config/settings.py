@@ -26,14 +26,14 @@ class Settings:
         self.documents_dir = "documents"
 
         # Document processing
-        self.chunk_size = 800  # Restored to original size for better context
+        self.chunk_size = 800  
         self.chunk_overlap = 100  # Original overlap for better context connection
 
         # Search settings
-        self.faiss_top_k = 10  # Restored to get more comprehensive results
-        self.bm25_top_k = 10   # Restored to get more comprehensive results
-        self.faiss_weight = 0.6
-        self.bm25_weight = 0.4
+        self.faiss_top_k = 10  
+        self.bm25_top_k = 10 
+        self.faiss_weight = 0.7  # Increased weight for semantic search
+        self.bm25_weight = 0.3  # Adjusted weight balance
 
         # Embedding model
         self.embedding_model = "text-embedding-3-small"  
@@ -41,8 +41,8 @@ class Settings:
 
         # Query processing
         self.max_context_length = 12000  # Good balance for context
-        self.model = "gpt-4-1106-preview"  # Using GPT-4 Turbo for good balance of cost/quality
-        self.response_model = "gpt-4-1106-preview"  # Same model for consistency
+        self.model = "gpt-4o-mini"  
+        self.response_model = "gpt-4o-mini"  
 
     def validate(self) -> bool:
         """Validate configuration."""

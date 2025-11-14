@@ -19,7 +19,7 @@ class DeepResearch:
                 result = await perform_research(
                     query=query,
                     breadth=2,  # Number of parallel search queries
-                    depth=2,    # How deep to follow up on findings
+                    depth=4,    # How deep to follow up on findings
                 )
                 
                 if not result.learnings:

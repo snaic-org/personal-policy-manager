@@ -677,6 +677,10 @@ def query_stream_endpoint():
                         chunk_data = json.loads(chunk.replace("data: ", "").strip())
                         if "content" in chunk_data:
                             full_response.append(chunk_data["content"])
+                        elif "report" in chunk_data:
+                            full_response.append(chunk_data["report"])
+                        elif "answer" in chunk_data:
+                            full_response.append(chunk_data["answer"])
                     except:
                         pass
 

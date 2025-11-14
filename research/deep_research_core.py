@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 
 # Load environment variables if not already loaded
-if not os.getenv("OPENAI_KEY") and not os.getenv("TAVILY_API_KEY"):
+if not os.getenv("GEMINI_API_KEY") and not os.getenv("TAVILY_API_KEY"):
     try:
         from dotenv import load_dotenv
         # Load environment variables from .env in the project root
@@ -24,7 +24,7 @@ tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 # Concurrency limit (keep for asyncio)
 CONCURRENCY_LIMIT = int(os.getenv("TAVILY_CONCURRENCY", "2"))
 
-from .ai.providers import generate_object, trim_prompt, parse_response
+from .ai.providers_gemini import generate_object, trim_prompt, parse_response
 from .prompt import system_prompt
 
 def log(*args):
@@ -73,11 +73,26 @@ async def generate_serp_queries(
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "The SERP query"
+                            "description": "The SERP query. Make it very specific and include exact terms."
                         },
                         "research_goal": {
                             "type": "string",
-                            "description": "First talk about the goal of the research that this query is meant to accomplish, then go deeper into how to advance the research once the results are found, mention additional research directions. Be as specific as possible, especially for additional research directions."
+                            "description": """Generate highly detailed research goals that cover:
+1. Specific coverage details (limits, exclusions, waiting periods)
+2. Cost information (premiums, deductibles, co-pays)
+3. Comparison points with other plans
+4. Policy terms and conditions
+5. Claim procedures and requirements
+6. Provider network restrictions
+
+Example: 'Find exact coverage limits for multifocal lens cataract surgery under Great Eastern SupremeHealth P Plus, including:
+- Pre/post operative coverage
+- Specific lens brands/types covered
+- Annual claim limits
+- Required pre-approvals
+- Network restrictions
+- Premium adjustments
+- Comparison with other insurers' coverage'"""
                         }
                     },
                     "required": ["query", "research_goal"]
@@ -226,23 +241,25 @@ async def perform_research(
 
                 search_kwargs = {
                     "query": serp_query.query,
-                    "max_results": 5,
+                    "max_results": 8,  # Increased from 5
                     "include_domains": [
-                        "www.moh.gov.sg",           # Ministry of Health Singapore
-                        "www.mas.gov.sg",           # Monetary Authority of Singapore
-                        "www.aia.com.sg",           # AIA Singapore
-                        "www.prudential.com.sg",    # Prudential Singapore
-                        "www.income.com.sg",        # NTUC Income
-                        "www.greateasternlife.com", # Great Eastern
-                        "www.policypal.com",        # PolicyPal Singapore
+                        "www.moh.gov.sg",
+                        "www.aia.com.sg",
+                        "www.prudential.com.sg",
+                        "www.income.com.sg",
+                        "www.greateasternlife.com",
+                        "www.axa.com.sg",
+                        "www.manulife.com.sg",
+                        "www.dollarbureau.com",
+                        "www.moneysmart.sg",
+                        "www.straitstimes.com",
+                        "www.channelnewsasia.com",
+                        "www.comparefirst.sg"
                     ],
-                    "exclude_domains": [
-                        "www.reddit.com",
-                        "www.quora.com",
-                        "medium.com",
-                        "blogspot.com",
-                        "forums.hardwarezone.com.sg"
-                    ]
+                    # "search_depth": "advanced",  # Using advanced instead of deep
+                    # "search_engine": "google",  # Added to ensure comprehensive search
+                    "api_max_retries": 3,  # Added for reliability
+                    "query_context": "singapore health insurance coverage details comparisons reviews site:.sg"
                 }
 
                 if wants_recent:
@@ -271,14 +288,28 @@ async def perform_research(
                 all_urls = visited_urls + new_urls
 
                 if depth > 1:
+                    # Enhanced recursive research logic
+                    # next_queries = []
+                    
+                    # # Add follow-up questions from processing
+                    # if processed["follow_up_questions"]:
+                    #     next_queries.extend(processed["follow_up_questions"])
+                    
+                    # # Generate comparison queries if we found specific details
+                    # if any("price" in l.lower() or "cost" in l.lower() or "coverage" in l.lower() for l in processed["learnings"]):
+                    #     next_queries.append(f"compare {serp_query.query} with alternatives")
+                    
                     next_query = f"""
+                    User original question: {query}
 Previous research goal: {serp_query.research_goal}
-Follow-up research directions: {chr(10).join(processed["follow_up_questions"])}
+Current findings: {chr(10).join(processed["learnings"])}
+Follow-up directions:
+{chr(10).join(f'- {q}' for q in next_queries)}
                     """.strip()
 
                     return await perform_research(
                         next_query,
-                        max(1, breadth // 2),
+                        breadth,  # Maintain breadth instead of reducing
                         depth - 1,
                         all_learnings,
                         all_urls,
@@ -316,24 +347,48 @@ async def write_final_report(
         
     learnings_string = "\n".join([f"- {learning}" for learning in learnings])
     
+    
     report_prompt = trim_prompt(
-        f"""Given the following user prompt and research findings, write a detailed report in Markdown format. Organize the information clearly with headings and sections.
+        f"""
+            Given the user's query and research findings, act as a **licensed Singapore insurance advisor**.
+            If information from multiple insurers is available, **recommend the best plan by name** and justify why.
+            If details are insufficient, identify what’s missing (e.g., premium cost, waiting period, exclusions).
 
-User Query: {prompt}
+            User Query: {prompt}
 
-Research Findings:
-{learnings_string}
+            Research Findings:
+            {learnings_string}
 
-Instructions:
-1. Write a comprehensive report covering all key findings
-2. Use clear headings and subheadings (## and ###)
-3. Include specific details, numbers, and facts from the research
-4. Format in proper Markdown
-5. Be factual and informative
-6. Aim for at least 3-4 main sections
-7. Include a brief conclusion
+            Instructions:
+            1. Start with a Direct Answer:
+            - Begin with "Yes", "No", or "Partially" when applicable
+            - Give a 1-2 sentence summary of the key finding
 
-Provide your response as a JSON object with the report in Markdown format."""
+            2. Structure (use these exact sections):
+            ▶ Current Coverage
+            - List what's currently covered
+            - Include specific amounts and conditions
+            
+            ▶ Options & Alternatives
+            - List relevant alternatives
+            - Include costs when available
+            
+            ▶ Key Considerations
+            - List important factors to consider
+            - Include any warnings or special notes
+            
+            ▶ Next Steps
+            - Bullet point specific actions to take
+            - Include contact information or deadlines
+
+            3. Formatting:
+            - Use bullet points for better readability
+            - Bold key terms and amounts
+            - Keep paragraphs to 2-3 sentences max
+            - Include specific numbers and dates
+            - Mark deadlines or critical info with ⚠️
+
+            Provide your response as a JSON object with the report in Markdown format."""
     )
     
     schema = {
