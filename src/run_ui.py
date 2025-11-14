@@ -64,7 +64,7 @@ async def run_ui(
     try:
         yield {"info": "Starting deep research..."}
         print("Starting deep research...")
-        result = await deep_research(query=combined_query, breadth=2, depth=1)
+        result = await deep_research(query=combined_query, breadth=4, depth=2)
         yield {"info": "Deep research completed. Generating report..."}
         print("Deep research completed. Generating report...")
 
