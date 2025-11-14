@@ -26,16 +26,10 @@ async function handleCitationClick(filename) {
       return;
     }
 
-    // Get the file as a blob
     const blob = await response.blob();
-
-    // Create a blob URL
     const blobUrl = URL.createObjectURL(blob);
-
-    // Open in new tab
     const newWindow = window.open(blobUrl, '_blank');
 
-    // Clean up the blob URL after a delay (to allow the file to load)
     if (newWindow) {
       setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
     }
@@ -62,20 +56,24 @@ async function handleCitationDownload(filename, event) {
  * and convert them to clickable links
  */
 function parseTextWithCitations(text) {
+  // Regex for RAG citations: [Source 1: filename.pdf, Page 5]
   const citationRegex = /\[Source \d+: ([^,]+), Page (\d+)\]/g;
+  
+  // Regex for Markdown links (like sources in the report): - https://...
+  const urlRegex = /(https:\/\/[^\s)]+)/g; // Escaped slashes
+
   const parts = [];
   let lastIndex = 0;
-  let match;
 
+  // Combine regexes would be complex, so let's process citations first
+  let match;
   while ((match = citationRegex.exec(text)) !== null) {
     // Add text before the citation
     if (match.index > lastIndex) {
       parts.push(text.substring(lastIndex, match.index));
     }
 
-    // Add the citation as a clickable link
     const filename = match[1];
-    const page = match[2];
     const citationText = match[0];
 
     parts.push(
@@ -105,17 +103,52 @@ function parseTextWithCitations(text) {
     lastIndex = match.index + match[0].length;
   }
 
-  // Add remaining text after last citation
+  // Add remaining text
   if (lastIndex < text.length) {
     parts.push(text.substring(lastIndex));
   }
+  
+  // Now, process all text parts for raw URLs (for the Sources list)
+  const finalParts = [];
+  parts.forEach((part, index) => {
+    if (typeof part !== 'string') {
+      finalParts.push(part); // It's already a React element (a citation)
+      return;
+    }
+    
+    // It's a string, so check for URLs
+    let lastUrlIndex = 0;
+    let urlMatch;
+    while ((urlMatch = urlRegex.exec(part)) !== null) {
+      // Add text before the URL
+      if (urlMatch.index > lastUrlIndex) {
+        finalParts.push(part.substring(lastUrlIndex, urlMatch.index));
+      }
+      
+      const url = urlMatch[0];
+      finalParts.push(
+        <a href={url} target="_blank" rel="noopener noreferrer" key={`${index}-${lastUrlIndex}`}>
+          {url}
+        </a>
+      );
+      
+      lastUrlIndex = urlMatch.index + url.length;
+    }
+    
+    // Add remaining text after the last URL
+    if (lastUrlIndex < part.length) {
+      finalParts.push(part.substring(lastUrlIndex));
+    }
+  });
 
-  return parts.length > 0 ? parts : text;
+
+  return finalParts.length > 0 ? finalParts : text;
 }
 
+
 /**
- * A helper function to render a block of text, converting
- * paragraphs and bullet lists into proper HTML.
+ * Renders a block of text, converting Markdown elements
+ * (headings, lists, bold) into proper HTML.
  */
 function renderContentLines(contentBlock) {
   if (!contentBlock) return null;
@@ -123,55 +156,106 @@ function renderContentLines(contentBlock) {
   const lines = contentBlock.split('\n');
   const elements = [];
   let currentList = [];
+  let currentListType = null; // 'ul' or 'ol'
+
+  // Helper to flush (render) the current list
+  const flushList = () => {
+    if (currentList.length > 0) {
+      const ListTag = currentListType; // 'ul' or 'ol'
+      elements.push(
+        <ListTag key={`list-${elements.length}`} className="message-list">
+          {currentList.map((item, li) => (
+            // Apply citation parsing to each list item
+            <li key={li}>{parseTextWithCitations(item)}</li>
+          ))}
+        </ListTag>
+      );
+      currentList = [];
+      currentListType = null;
+    }
+  };
 
   lines.forEach((line, index) => {
     const trimmedLine = line.trim();
 
-    if (trimmedLine.startsWith('-')) {
-      // If it's a list item, add to the current list
-      const listItemText = trimmedLine.replace('-', '').trim();
-      currentList.push({ text: listItemText, key: index });
-    } else {
-      // Not a list item. First, push any existing list.
-      if (currentList.length > 0) {
-        elements.push(
-          <ul key={`list-${index}`} className="message-list">
-            {currentList.map((item, li) => (
-              <li key={li}>{parseTextWithCitations(item.text)}</li>
-            ))}
-          </ul>
-        );
-        currentList = []; // Reset the list
-      }
+    // -------------------------------------------------
+    // V V V THIS IS THE MODIFIED BLOCK V V V
+    // -------------------------------------------------
+    // 1. Check for Headings (render as bold paragraphs)
+    if (trimmedLine.startsWith('### ')) {
+      flushList(); // Render any pending list
+      elements.push(<p key={`h-${index}`}><strong>{parseTextWithCitations(trimmedLine.substring(4))}</strong></p>);
+      return;
+    }
+    if (trimmedLine.startsWith('## ')) {
+      flushList();
+      elements.push(<p key={`h-${index}`}><strong>{parseTextWithCitations(trimmedLine.substring(3))}</strong></p>);
+      return;
+    }
+    if (trimmedLine.startsWith('# ')) {
+      flushList();
+      elements.push(<p key={`h-${index}`}><strong>{parseTextWithCitations(trimmedLine.substring(2))}</strong></p>);
+      return;
+    }
+    // -------------------------------------------------
+    // ^ ^ ^ END OF MODIFIED BLOCK ^ ^ ^
+    // -------------------------------------------------
 
-      // Now, push the current paragraph (if it's not empty)
-      if (trimmedLine) {
-         // Check for **Bold** text and render it
-         const parts = trimmedLine.split(/(\*\*.*?\*\*)/g); // Split by **bolded text**
-         elements.push(
-           <p key={`p-${index}`}>
-             {parts.map((part, pi) => {
-               if (part.startsWith('**') && part.endsWith('**')) {
-                 return <strong key={pi}>{parseTextWithCitations(part.slice(2, -2))}</strong>;
-               }
-               return parseTextWithCitations(part); // Parse citations in plain text
-             })}
-           </p>
-         );
+    // 2. Check for Bullet List ('- ' or '* ')
+    if (trimmedLine.startsWith('- ') || trimmedLine.startsWith('* ')) {
+      if (currentListType !== 'ul') { // If changing list type
+        flushList();
+        currentListType = 'ul';
       }
+      currentList.push(trimmedLine.substring(2));
+      return;
+    }
+    
+    // 3. Check for Numbered List ('1. ')
+    const numberedListMatch = trimmedLine.match(/^(\d+)\.\s+(.*)/);
+    if (numberedListMatch) {
+      if (currentListType !== 'ol') { // If changing list type
+        flushList();
+        currentListType = 'ol';
+      }
+      currentList.push(numberedListMatch[2]); // Just push the content
+      return;
+    }
+
+    // 4. Check for Horizontal Rule
+    if (trimmedLine === '---') {
+      flushList();
+      elements.push(<hr key={`hr-${index}`} className="message-divider" />);
+      return;
+    }
+
+    // 5. Handle Paragraphs (non-empty lines)
+    if (trimmedLine) {
+      flushList(); // We're in a new paragraph, so flush any list
+      
+      // Handle **Bold** text within paragraphs
+      const parts = trimmedLine.split(/(\*\*.*?\*\*)/g); 
+      elements.push(
+        <p key={`p-${index}`}>
+          {parts.map((part, pi) => {
+            if (part.startsWith('**') && part.endsWith('**')) {
+              return <strong key={pi}>{parseTextWithCitations(part.slice(2, -2))}</strong>;
+            }
+            return parseTextWithCitations(part); // Also parse citations in non-bold parts
+          })}
+        </p>
+      );
+      return;
+    }
+
+    // 6. Handle Empty Lines
+    if (!trimmedLine) {
+      flushList(); // An empty line ends a list.
     }
   });
 
-  // Push any remaining list items after the loop
-  if (currentList.length > 0) {
-    elements.push(
-      <ul key={`list-end`} className="message-list">
-        {currentList.map((item, li) => (
-          <li key={li}>{parseTextWithCitations(item.text)}</li>
-        ))}
-      </ul>
-    );
-  }
+  // After the loop, flush any remaining list
+  flushList();
 
   return elements;
 }
@@ -182,44 +266,10 @@ export default function MessageFormatter({ content }) {
     return <div className="formatted-message"></div>;
   }
 
-  // Split the entire message into main content and sources
-  const [mainContent, ...sourcesParts] = content.split(/\n---\n/);
-  const sourcesContent = sourcesParts.join('\n---\n'); // Re-join if multiple '---'
-
-  // Process the main content sections (split by 1. **Title**)
-  const sections = mainContent.split(/(?=^\s*\d+\.\s*\*\*)/m);
-
+  // Render the entire content block
   return (
     <div className="formatted-message">
-      {sections.map((section, i) => {
-        // Find the title (e.g., "1. **Health Insurance (GREAT SupremeHealth):**")
-        const titleMatch = section.match(/^\s*\d+\.\s*\*\*([^*]+)\*\*/m);
-        const title = titleMatch ? titleMatch[1].trim() : '';
-        
-        // Get the content *after* the title
-        const sectionContent = titleMatch ?
-          section.replace(/^\s*\d+\.\s*\*\*[^*]+\*\*:?\s*/, '') :
-          section;
-
-        return (
-          <div key={i} className="message-section">
-            {title && <h3 className="section-title">{title}</h3>}
-            <div className="section-content">
-              {renderContentLines(sectionContent)}
-            </div>
-          </div>
-        );
-      })}
-
-      {/* Render the Sources section if it exists */}
-      {sourcesContent && (
-        <>
-          <hr className="message-divider" />
-          <div className="message-section sources-section">
-            {renderContentLines(sourcesContent)}
-          </div>
-        </>
-      )}
+      {renderContentLines(content)}
     </div>
   );
 }

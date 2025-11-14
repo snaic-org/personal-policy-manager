@@ -1,13 +1,48 @@
-# Report: AIA Insurance on Top of Great Eastern Policy## IntroductionThe user has a current policy with Great Eastern, which includes a Manulife_Policy_Illustration_REDACTED.pdf and GREAT_SupremeHealth_Benefits.pdf. The user is considering purchasing an AIA insurance policy in addition to their existing Great Eastern policy.## Comparison with Similar Policies from Other InsurersAIA Singapore Private Limited, AXA Insurance Pte. Ltd, The Great Eastern Life Assurance Company Limited, and Income Insurance Limited are some of the insurance companies that offer Medisave-approved plans. Great Eastern Life offers a full range of flexible insurance solutions for comprehensive coverage.## Research FindingsGREAT Life Advantage 4 is a whole life investment-linked insurance plan that offers protection and optional critical illness protection. AIA HealthShield Gold Max can enhance your MediShield Life with more comprehensive coverage. GREAT CareShield is a MediSave-approved supplementary plan to your CareShield Life or ElderShield scheme aimed to provide additional long-term care coverage in the event of a disability, with a limit of S$600 per calendar year per insured person for MediSave funds.## Comparison with Current PolicyThe user’s current policy with Great Eastern includes a Manulife_Policy_Illustration_REDACTED.pdf, which provides a Critical Care Enhancer Rider (II) for ManuProtect Term (II). This rider provides protection against any of the listed 36 covered critical illnesses. The user’s current policy also includes a GREAT_SupremeHealth_Benefits.pdf, which provides benefits for Worldwide Coverage, Emergency Assistance Services, and Additional Annual Benefit Limits.## RecommendationBased on the research findings, it is recommended that the user consider purchasing an AIA insurance policy in addition to their existing Great Eastern policy. AIA HealthShield Gold Max can enhance the user’s MediShield Life with more comprehensive coverage. Furthermore, GREAT CareShield can provide additional long-term care coverage in the event of a disability.## ConclusionIn conclusion, the user should consider purchasing an AIA insurance policy in addition to their existing Great Eastern policy. The AIA HealthShield Gold Max and GREAT CareShield can provide additional coverage and benefits that are not included in the user’s current policy. It is recommended that the user consult with a financial adviser or representative to determine the best course of action for their specific needs and circumstances.
+# Detailed Report on Overseas Outpatient Treatment Coverage and Insurance Policies\n\n# Table of Contents\n1. [Introduction](#Introduction)\n1. [Current Policy Information](#Current-Policy-Information)\n1. [Comparison with Similar Policies](#Comparison-with-Similar-Policies)\n1. [Alternative Policies and Coverage](#Alternative-Policies-and-Coverage)\n\n# Introduction\n\nThis report provides an in-depth analysis of the current policy information, comparison with similar policies, and alternative policies and coverage for overseas outpatient treatment in Japan.\n\n# Current Policy Information\n\nAccording to the provided policy information, the GREAT SupremeHealth plan offers coverage for various health expenses, including hospitalization, surgery, and outpatient treatment. However, the coverage limits and exclusions vary depending on the plan type and hospital class.\n\n| Plan Type | Benefit Limit |\n| --- | --- |\n| GREAT TotalCare P Select | up to 95% of Total Hospital Bill |\n| GREAT SupremeHealth A Plus + GREAT TotalCare A | up to 95% of total hospitalisation bill |\n| GREAT Critical Cover Series | lump sum payout upon diagnosis of critical illness |\n\n# Comparison with Similar Policies\n\nA study by NUS Saw Swee Hock School of Public Health found that the 
 
 ## Sources
 
-- https://www.greateasternlife.com/my/en/personal-insurance.html
-- https://www.aia.com.sg/content/dam/sg-wise/en/docs/about-aia/press-release/2020/press-release-share-the-love.pdf.coredownload.inline.pdf
-- https://www.greateasternlife.com/my/en/personal-insurance/our-products/travel-insurance.html
-- https://www.greateasternlife.com/sg/en/personal-insurance/our-products/health-insurance/great-careshield.html
-- https://www.aia.com.sg/en/health-wellness/healthy-living-with-aia/5-types-of-insurance-you-should-get-in-singapore
-- https://www.mas.gov.sg/-/media/MAS/Fintech/SGFinDex/SGFinDex-Service-TC.pdf
+- https://www.greateasternlife.com/sg/en/personal-insurance/our-products/personal-accident-insurance/prestige-pacare.html
+- https://www.aia.com.sg/content/dam/sg-wise/en/docs/about-aia/press-release/2013/AIA_press_release_AIA_HSG_Max_AIA_HSG_Max_Essentail_28Jan2013_SG.pdf
+- https://www.greateasternlife.com/sg/en/personal-insurance/our-products/life-insurance/great-life-multiplier/great-life-multiplier-mla.html
+- https://www.greateasternlife.com/my/en/personal-insurance/our-products/health-insurance.html
+- https://www.greateasternlife.com/sg/en/customer-services/policy-management/policy-conversion/plan-conversion-for-great-supremehealth-and-great-totalcare-plan.html
+- https://www.greateasternlife.com/sg/en/personal-insurance/lifepedia/lifestyle-protection/how-much-travel-coverage-should-you-get.html
+- https://www.greateasternlife.com/content/dam/great-eastern/sg/homepage/personal-insurance/our-promotions-and-events/2021/medishield-life-changes/key-changes-to-gsh-gtc.pdf
+- https://www.greateasternlife.com/content/dam/corp-site/great-eastern/sg/gels-ftrp-imc-cm/health-insurance-/great-hospital-cash/great-hospital-cash.pdf
+- https://www.greateasternlife.com/content/dam/corp-site/great-eastern/sg/gels-ftrp-imc-cm/health-insurance-/great-supremehealth/october-2025/gels-pdt-pd-gsh-gtc-benefit-and-premium-tables-eng.pdf
+- https://www.aia.com.sg/content/dam/sg/en/docs/product_brochures/platinum/aia-platinum-health-brochure.pdf
+- https://www.greateasternlife.com/sg/en/personal-insurance/our-products/life-insurance/great-term.html
+- https://www.aia.com.sg/content/dam/sg-wise/en/docs/our-products/en/aia-platinum-international-health-brochure.pdf
+- https://www.greateasternlife.com/sg/en/personal-insurance/our-products/life-insurance/great-term1.html
 - https://www.greateasternlife.com/sg/en/personal-insurance/our-products/life-insurance/great-life-advantage.html
-- https://www.income.com.sg/claims/health-and-personal-accident/hospitalisation-claim
-- https://www.greateasternlife.com/sg/en/about-us/media-centre/media-stories/cancer-drugs-treatments-integrated-shield-plans-coverage-changes.html
+- https://www.income.com.sg/overseas-study-protection-plan
+- https://www.aia.com.sg/en/our-products/travel-and-lifestyle/travel
+- https://www.greateasternlife.com/content/dam/great-eastern/sg/homepage/personal-insurance/find-the-right-plan/product-summary/essential-protector-product-summary.pdf
+- https://www.greateasternlife.com/sg/en/personal-insurance/lifepedia/medical-coverage/4-key-considerations-for-a-comprehensive-health-insurance-portfolio.html
+- https://www.income.com.sg/personal-accident-insurance/pa-fitness-protect
+- https://www.greateasternlife.com/content/dam/corp-site/group/gels-au-corpcomms/english-website/annual-report/great-eastern-holdings-limited-ar-2023-hr-r-protected.pdf
+- https://www.greateasternlife.com/content/dam/great-eastern/sg/homepage/personal-insurance/our-products/life-insurance/prestige-global-health-options/prestige-global-health-options.pdf
+- https://www.greateasternlife.com/sg/en/personal-insurance/our-products/health-insurance/great-supremehealth-public-hospital.html
+- https://www.aia.com.sg/content/dam/sg/en/docs/product_brochures/medical-protection/AIA-HealthShield-Gold-Max.pdf
+- https://www.greateasternlife.com/content/dam/great-eastern/sg/homepage/personal-insurance/find-the-right-plan/product-summary/prestige-pacare-product-summary.pdf
+- https://www.income.com.sg/blog/travel-insurance-faqs
+- https://www.greateasternlife.com/sg/en/personal-insurance/lifepedia/medical-coverage/are-you-truly-safe-from-hepatitis.html
+- https://www.aia.com.sg/en/our-products/corporate-international-medical/aia-premier-international-medical.html
+- https://www.greateasternlife.com/content/dam/corp-site/great-eastern/sg/homepage/about-us/investor-relations/annual-reports/2008-annual-report.pdf
+- https://www.aia.com.sg/content/dam/sg-wise/en/docs/our-products/en/aia-around-the-world-plus-ii.pdf
+- https://www.greateasternlife.com/sg/en/personal-insurance/lifepedia/life-protection/the-singaporean-guide-to-insurance-by-age-according-to-ai.html
+- https://www.greateasternlife.com/sg/en/personal-insurance/lifepedia/medical-coverage/some-practical-ways-to-rein-in-rising-healthcare-costs-premiums.html
+- https://www.greateasternlife.com/content/dam/great-eastern/sg/homepage/personal-insurance/our-products/health-insurance/great-supremehealth/gsh-gtc-brochure.pdf
+- https://www.aia.com.sg/content/dam/sg/en/docs/product_brochures/medical-protection/aia-health-cashplus-brochure-02012015.pdf
+- https://www.greateasternlife.com/sg/en/personal-insurance/our-products/health-insurance.html
+- https://www.greateasternlife.com/content/dam/great-eastern/sg/homepage/personal-insurance/find-the-right-plan/protect-yourself-and-your-family/health-protection/supreme-health/medishield-life-faqs.pdf
+- https://eservices.mas.gov.sg/opera/8195d3fe-6450-4a0d-96ae-fa9dbcfdfc2a.publishresource
+- https://www.greateasternlife.com/content/dam/corp-site/great-eastern/sg/gels-ftrp-imc-cm/health-insurance-/great-supremehealth/gels-pdt-pd-ip-changes-appendix-c.pdf
+- https://www.greateasternlife.com/sg/en/personal-insurance/lifepedia/medical-coverage/hospitalisation/boost-your-health-insurance-portfolio.html
+- https://www.greateasternlife.com/content/dam/corp-site/great-eastern/sg/homepage/about-us/investor-relations/annual-reports/2009-annual-report.pdf
+- https://www.greateasternlife.com/sg/en/personal-insurance/our-products/health-insurance/prestigeglobalhealthoptions.html
+- https://www.greateasternlife.com/content/dam/great-eastern/sg/homepage/personal-insurance/find-the-right-plan/protect-yourself-and-your-family/life-protection/prestige-global-health-options/prestige-global-health-options.pdf
+- https://www.greateasternlife.com/sg/en/personal-insurance/our-products.html
+- https://www.greateasternlife.com/content/dam/dmassets/great-eastern/singapore/gels-ftrp-imc-cm/health-insurance-/great-supremehealth/gsh-gtc-benefit-schedule-and-premium-rates-01012024.pdf
+- https://www.greateasternlife.com/content/dam/corp-site/great-eastern/sg/gels-ftrp-imc-cm/health-insurance-/great-supremehealth/october-2025/gels-pdt-pd-gsh-gtc-eng-brochure.pdf

@@ -395,8 +395,10 @@ class QueryProcessor:
             
             # deep research with UI 
             # If intent requires deep research → SKIP normal RAG flow
-            # If intent requires deep research → SKIP normal RAG flow
             if needs_research:
+                start_research_time = time.time()
+                print("Starting deep research streaming response...")
+                
                 from src.run_ui import run_ui
 
                 loop = asyncio.new_event_loop()
@@ -414,12 +416,19 @@ class QueryProcessor:
 
                 finally:
                     loop.close()
+                    
+                end_research_time = time.time()
+                print(f"Total deep research processing time: {end_research_time - start_research_time:.2f}s")
+                    
+                # Signal that the stream is finished
+                yield "data: " + json.dumps({"done": True}) + "\n\n"
+                print("Finished streaming deep research response.")
 
                 return  # ← CRITICAL: prevents normal RAG stream from running
 
 
 
-            # Strea# NORMAL RAG streaming
+            # NORMAL RAG streaming
             if unique_results:
                 for chunk in self._generate_response_stream(
                     query, unique_results, is_personal_batch, user_profile
