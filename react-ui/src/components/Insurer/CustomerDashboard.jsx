@@ -4,6 +4,7 @@ import CustomerChat from './CustomerChat';
 import CustomerDocuments from './CustomerDocuments';
 import UnderwritingForm from './UnderwritingForm';
 import CustomerProfile from './CustomerProfile';
+import CustomerPolicyInfo from './CustomerPolicyInfo';
 
 const tabStyles = {
   display: 'flex',
@@ -23,6 +24,19 @@ const tabButton = (isActive) => ({
   marginBottom: '-1px',
 });
 
+// --- Wrapper for constrained tabs ---
+const ConstrainedTabView = ({ children }) => (
+  <div style={{ 
+    maxWidth: '900px', 
+    margin: '0 auto', 
+    height: '100%', 
+    overflowY: 'auto', 
+    padding: '20px 40px' 
+  }}>
+    {children}
+  </div>
+);
+
 export default function CustomerDashboard({ customerId }) {
   const [activeTab, setActiveTab] = useState('chat');
 
@@ -35,13 +49,11 @@ export default function CustomerDashboard({ customerId }) {
     setLoading(true);
     setError('');
     try {
-      // Fetch profile and files in parallel
       const [profileData, filesData] = await Promise.all([
         api.getInsurerProfile(customerId),
         api.getInsurerCustomerFiles(customerId)
       ]);
       
-      // Ensure underwriting stubs exist for UnderwritingForm
       if (profileData.insurance_policies) {
         for (const filename in profileData.insurance_policies) {
           if (!profileData.insurance_policies[filename].underwriting) {
@@ -61,10 +73,10 @@ export default function CustomerDashboard({ customerId }) {
 
   useEffect(() => {
     fetchData();
-  }, [fetchData]); // Runs when customerId changes
+  }, [fetchData]);
 
+  // --- Tab Content Renderer ---
   const renderTabContent = () => {
-    // Show loading/error at dashboard level for data-dependent tabs
     if (activeTab !== 'chat') {
       if (loading) return <p style={{ padding: '20px' }}>Loading data...</p>;
       if (error) return <p className="form-error" style={{ margin: '20px' }}>{error}</p>;
@@ -73,31 +85,53 @@ export default function CustomerDashboard({ customerId }) {
     switch (activeTab) {
       case 'chat':
         return <CustomerChat customerId={customerId} />;
+      
       case 'documents':
         return (
-          <CustomerDocuments
-            customerId={customerId}
-            files={files} // Pass files as prop
-            onDataChanged={fetchData} // Pass the refresh function
-          />
+          <ConstrainedTabView>
+            <CustomerDocuments
+              customerId={customerId}
+              files={files}
+              onDataChanged={fetchData}
+            />
+          </ConstrainedTabView>
         );
+      
+      case 'policies':
+        return (
+          <ConstrainedTabView>
+            <CustomerPolicyInfo
+              customerId={customerId}
+              profile={profile}
+              files={files}
+              onDataChanged={fetchData}
+            />
+          </ConstrainedTabView>
+        );
+
       case 'underwriting':
         return (
-          <UnderwritingForm
-            customerId={customerId}
-            profile={profile} // Pass profile as prop
-            onDataChanged={fetchData} // Pass the refresh function
-          />
+          <ConstrainedTabView>
+            <UnderwritingForm
+              customerId={customerId}
+              profile={profile}
+              onDataChanged={fetchData}
+            />
+          </ConstrainedTabView>
         );
+
       case 'profile':
         return (
-          <CustomerProfile
-            customerId={customerId}
-            profile={profile} // Pass profile as prop
-            files={files} // Pass files as prop
-            onDataChanged={fetchData} // Pass the refresh function
-          />
+          <ConstrainedTabView>
+            <CustomerProfile
+              customerId={customerId}
+              profile={profile}
+              files={files}
+              onDataChanged={fetchData}
+            />
+          </ConstrainedTabView>
         );
+
       default:
         return null;
     }
@@ -112,6 +146,9 @@ export default function CustomerDashboard({ customerId }) {
         <button style={tabButton(activeTab === 'documents')} onClick={() => setActiveTab('documents')}>
           Documents
         </button>
+        <button style={tabButton(activeTab === 'policies')} onClick={() => setActiveTab('policies')}>
+          Policies
+        </button>
         <button style={tabButton(activeTab === 'underwriting')} onClick={() => setActiveTab('underwriting')}>
           Underwriting
         </button>
@@ -120,6 +157,9 @@ export default function CustomerDashboard({ customerId }) {
         </button>
       </div>
       
+      {/* This 'tab-content' div contains either a 
+        full-width component (Chat) or a constrained-width div (all other tabs).
+      */}
       <div className="tab-content" style={{ flex: 1, overflow: 'hidden' }}>
         {renderTabContent()}
       </div>

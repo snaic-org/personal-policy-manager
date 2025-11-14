@@ -110,7 +110,7 @@ export default function CustomerDocuments({ customerId, files, onDataChanged }) 
       </div>
 
       {/* --- FILE LIST SECTION --- */}
-      <div style={{ borderTop: '1px solid #e0e0e0', paddingTop: '16px' }}>
+      <div>
         <FileDisplayList
           title="Uploaded Files for Customer"
           files={files} // <-- From props

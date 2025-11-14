@@ -5,9 +5,7 @@ import UploadedFiles from './UploadedFiles';
 export default function Sidebar({ 
   user, 
   onUploadSuccess, 
-  refreshTrigger,
-  activeTab,
-  onTabChange
+  refreshTrigger
 }) {
   return (
     <aside className="sidebar">
@@ -20,24 +18,6 @@ export default function Sidebar({
           {user ? user.username : 'Loading...'}
         </h3>
       </div>
-
-      {/* --- Tab Navigation --- */}
-      <div className="sidebar-nav">
-        <button
-          className={`sidebar-nav-btn ${activeTab === 'chat' ? 'active' : ''}`}
-          onClick={() => onTabChange('chat')}
-        >
-          Chat
-        </button>
-        <button
-          className={`sidebar-nav-btn ${activeTab === 'profile' ? 'active' : ''}`}
-          onClick={() => onTabChange('profile')}
-        >
-          My Profile & Policies
-        </button>
-      </div>
-      {/* --- Tab Navigation --- */}
-
 
       {/* This part will scroll if content is long */}
       <div className="sidebar-content">

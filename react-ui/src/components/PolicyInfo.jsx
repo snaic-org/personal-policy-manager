@@ -52,6 +52,8 @@ export default function PolicyInfo({ refreshTrigger }) {
       onSave={handleSave}
       isLoading={loading}
       saveButtonText="Save Policy Details"
+      showPolicySelector={true}
+      policySelectorLabel="Select Policy to Edit"
     />
   );
 }

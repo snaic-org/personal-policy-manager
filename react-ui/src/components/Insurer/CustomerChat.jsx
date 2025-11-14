@@ -112,7 +112,7 @@ export default function CustomerChat({ customerId }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div className="chat-header">
-        <h3>Customer Query</h3>
+        <h3>Customer Policies Query</h3>
         <button
           className="btn secondary"
           onClick={handleClearHistory}

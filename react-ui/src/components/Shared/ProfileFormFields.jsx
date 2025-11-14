@@ -66,7 +66,7 @@ export default function ProfileFormFields({
 
   return (
     <div className="profile-form-container" style={{ marginBottom: '24px' }}>
-      <h4>Customer Personal Info</h4>
+      <h3>Customer Personal Info</h3>
       <form onSubmit={handleSave}>
         <div className="form-group">
           <label htmlFor={`name-${formIdPrefix}`} style={{ marginBottom: '4px', fontSize: '14px' }}>Full Name</label>

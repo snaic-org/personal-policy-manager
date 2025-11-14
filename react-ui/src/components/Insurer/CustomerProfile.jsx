@@ -1,10 +1,9 @@
 import React from 'react';
 import * as api from '../../services/api.js';
 import CustomerProfileForm from './CustomerProfileForm';
-import CustomerPolicyInfo from './CustomerPolicyInfo';
 
 /**
- * This component wraps the two new forms in the "Profile" tab
+ * This component wraps the profile form in the "Profile" tab
  * for the insurer view. It receives data from its parent
  * (CustomerDashboard) and passes it down.
  */
@@ -17,7 +16,7 @@ export default function CustomerProfile({
   onDataChanged 
 }) {
   
-  // This function is passed to the children forms
+  // This function is passed to the children form
   const handleProfileUpdate = async (updatedProfileData) => {
     try {
       await api.saveInsurerProfile(customerId, updatedProfileData);
@@ -38,15 +37,7 @@ export default function CustomerProfile({
       {/* Pass the profile data and the save handler to the form */}
       <CustomerProfileForm
         customerId={customerId}
-        initialProfile={profile} // <-- From props
-        onSave={handleProfileUpdate}
-      />
-      
-      {/* Pass profile, files, and save handler to the policy info form */}
-      <CustomerPolicyInfo
-        customerId={customerId}
-        initialProfile={profile} // <-- From props
-        customerFiles={files}    // <-- From props
+        initialProfile={profile}
         onSave={handleProfileUpdate}
       />
     </div>

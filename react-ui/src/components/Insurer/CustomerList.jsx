@@ -62,7 +62,7 @@ export default function CustomerList({ selectedCustomerId, onSelectCustomer }) {
               className="form-input"
               value={newUsername}
               onChange={e => setNewUsername(e.target.value)}
-              placeholder="e.g., john.doe@email.com"
+              placeholder="e.g., john_doe"
             />
           </div>
           <button type="submit" className="btn primary" disabled={isCreating} style={{ width: '100%' }}>

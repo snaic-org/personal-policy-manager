@@ -887,8 +887,8 @@ def upload_for_customer(customer_id):
                     # Add a new stub using the filename as the key
                     insurance_policies[filename] = {
                         "policy_type": "Health", # Default
-                        "insurer": "Unknown",
-                        "plan_name": "Unknown (Uploaded by Insurer)",
+                        "insurer": "",
+                        "plan_name": "",
                         "underwriting": {} # This is the key for the underwriting tab
                     }
                     new_policies_added = True
