@@ -1,65 +1,56 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import * as api from '../../services/api';
 
-export default function UnderwritingForm({ customerId }) {
-  const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+export default function UnderwritingForm({ 
+  customerId, 
+  profile: initialProfile,
+  loading, 
+  error, 
+  onDataChanged 
+}) {
+  const [profile, setProfile] = useState(initialProfile);
   const [message, setMessage] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  
+  React.useEffect(() => {
+    setProfile(initialProfile);
+  }, [initialProfile]);
 
-  const fetchProfile = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const data = await api.getInsurerProfile(customerId);
-      // Ensure underwriting object exists for each policy
-      if (data.policy_details) {
-        data.policy_details = data.policy_details.map(policy => ({
-          ...policy,
-          underwriting: policy.underwriting || {} // Ensure object exists
-        }));
-      }
-      setProfile(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [customerId]);
-
-  useEffect(() => {
-    fetchProfile();
-  }, [fetchProfile]);
-
-  const handleInputChange = (policyId, field, value) => {
+  const handleInputChange = (filename, field, value) => {
     setProfile(prevProfile => {
-      const newPolicyDetails = prevProfile.policy_details.map(policy => {
-        if (policy.policy_id === policyId) {
-          return {
-            ...policy,
-            underwriting: {
-              ...policy.underwriting,
-              [field]: value
-            }
-          };
+      const updatedUnderwriting = {
+        ...prevProfile.insurance_policies[filename].underwriting,
+        [field]: value
+      };
+      if (field === 'status' && value !== 'approved_with_loading') {
+        updatedUnderwriting.premium_loading_percent = null;
+      }
+      const updatedPolicy = {
+        ...prevProfile.insurance_policies[filename],
+        underwriting: updatedUnderwriting
+      };
+      return {
+        ...prevProfile,
+        insurance_policies: {
+          ...prevProfile.insurance_policies,
+          [filename]: updatedPolicy
         }
-        return policy;
-      });
-      return { ...prevProfile, policy_details: newPolicyDetails };
+      };
     });
   };
 
   const handleSave = async () => {
     setIsSaving(true);
-    setError('');
+    // setError(''); // Parent handles error
     setMessage('');
     try {
       const res = await api.saveInsurerProfile(customerId, profile);
       setMessage(res.message);
-      fetchProfile(); // Refetch to confirm
+      onDataChanged(); // <-- Refresh parent data
     } catch (err) {
-      setError(err.message);
+      // We can still show a local save error
+      setMessage(''); // Clear success message
+      alert(`Save failed: ${err.message}`); // Show error
     } finally {
       setIsSaving(false);
     }
@@ -67,30 +58,27 @@ export default function UnderwritingForm({ customerId }) {
 
   if (loading) return <p style={{ padding: '20px' }}>Loading profile...</p>;
   if (error) return <p className="form-error" style={{ margin: '20px' }}>{error}</p>;
-  if (!profile || !profile.policy_details || profile.policy_details.length === 0) {
+  if (!profile || !profile.insurance_policies || Object.keys(profile.insurance_policies).length === 0) {
     return <p style={{ padding: '20px' }}>No policies found for this customer. Please upload documents first.</p>;
   }
 
   return (
     <div style={{ padding: '20px', overflowY: 'auto', height: '100%' }}>
       <h3>Underwriting Details</h3>
-      <p style={{ fontSize: '14px', color: '#555', margin: '0 0 20px' }}>
-        Set underwriting status, loading, and exclusions for each policy.
-      </p>
       
-      {profile.policy_details.map(policy => (
-        <div key={policy.policy_id} style={{ border: '1px solid #ddd', borderRadius: '8px', padding: '20px', marginBottom: '20px' }}>
-          <h4 style={{ margin: '0 0 16px', borderBottom: '1px solid #eee', paddingBottom: '8px' }}>
-            {policy.filename}
+      {Object.entries(profile.insurance_policies).map(([filename, policy]) => (
+         <div key={filename} style={{ border: '1px solid #ddd', borderRadius: '8px', padding: '20px', marginBottom: '20px' }}>
+          <h4 style={{ margin: '0 0 16px', borderBottom: '1px solid #eee', paddingBottom: '8px', wordBreak: 'break-all' }}>
+            {filename}
           </h4>
           <div className="form-group">
             <label>Status</label>
             <select
               className="form-input"
               value={policy.underwriting?.status || ''}
-              onChange={e => handleInputChange(policy.policy_id, 'status', e.target.value)}
+              onChange={e => handleInputChange(filename, 'status', e.target.value)}
             >
-              <option value="">Pending</option>
+              <option value="pending">Pending</option>
               <option value="approved">Approved</option>
               <option value="approved_with_loading">Approved with Loading</option>
               <option value="declined">Declined</option>
@@ -102,8 +90,9 @@ export default function UnderwritingForm({ customerId }) {
               type="number"
               className="form-input"
               value={policy.underwriting?.premium_loading_percent || ''}
-              onChange={e => handleInputChange(policy.policy_id, 'premium_loading_percent', e.target.value)}
+              onChange={e => handleInputChange(filename, 'premium_loading_percent', e.target.value)}
               placeholder="e.g., 15"
+              disabled={policy.underwriting?.status !== 'approved_with_loading'}
             />
           </div>
           <div className="form-group" style={{ marginTop: '10px' }}>
@@ -112,7 +101,7 @@ export default function UnderwritingForm({ customerId }) {
               className="form-input"
               rows="3"
               value={policy.underwriting?.exclusions || ''}
-              onChange={e => handleInputChange(policy.policy_id, 'exclusions', e.target.value)}
+              onChange={e => handleInputChange(filename, 'exclusions', e.target.value)}
               placeholder="e.g., Asthma-related complications"
             />
           </div>
@@ -122,7 +111,7 @@ export default function UnderwritingForm({ customerId }) {
               className="form-input"
               rows="3"
               value={policy.underwriting?.notes || ''}
-              onChange={e => handleInputChange(policy.policy_id, 'notes', e.target.value)}
+              onChange={e => handleInputChange(filename, 'notes', e.target.value)}
               placeholder="e.g., User disclosed asthma at age 10."
             />
           </div>

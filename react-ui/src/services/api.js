@@ -191,6 +191,22 @@ export async function downloadFile(filename) {
     
     return res.json(); // returns [{ role: 'user', content: '...' }, ...]
   }
+
+  export async function clearHistory() {
+    const res = await fetch(`${BASE}/history`, {
+      method: 'DELETE',
+      headers: {
+        ...getAuthHeader()
+      }
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+
+    return res.json();
+  }
   
   export async function sendQuery(query) {
     const body = { query };
@@ -417,6 +433,18 @@ export async function getInsurerHistory(customerId) {
   const res = await fetch(`${BASE}/api/insurer/history/${customerId}`, {
     // Note: This endpoint needs to be created in main.py
     method: 'GET',
+    headers: { ...getAuthHeader() }
+  });
+  if (!res.ok) throw new Error((await res.json()).error);
+  return res.json();
+}
+
+/**
+ * (Insurer) Clear chat history for a specific customer.
+ */
+export async function clearInsurerHistory(customerId) {
+  const res = await fetch(`${BASE}/api/insurer/history/${customerId}`, {
+    method: 'DELETE',
     headers: { ...getAuthHeader() }
   });
   if (!res.ok) throw new Error((await res.json()).error);

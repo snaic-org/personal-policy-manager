@@ -40,29 +40,6 @@ class QueryProcessor:
         self.search_engine = None
         self.current_batch_id = None
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        # self.user_profile = self._load_user_profile()  # Load profile on initialization
-
-    # def _load_user_profile(self) -> Optional[Dict[str, Any]]:
-    #     """Loads the user profile from user_profile.json in the project root."""
-    #     profile_path = Path("user_profile_basic.json")
-    #     if profile_path.exists():
-    #         try:
-    #             with open(profile_path, "r") as f:
-    #                 profile = json.load(f)
-    #                 print("User profile loaded successfully.")
-    #                 return profile
-    #         except json.JSONDecodeError:
-    #             print("Error: user_profile.json is not valid JSON.")
-    #             return None
-    #         except Exception as e:
-    #             print(f"Error loading user profile: {e}")
-    #             return None
-    #     else:
-    #         # it's okay if the profile doesn't exist, just means no personalization
-    #         print(
-    #             "Info: user_profile.json not found. Proceeding without personalization."
-    #         )
-    #         return None
 
     def _ensure_batch_loaded(self, batch_id: str) -> bool:
         """Ensure the specified batch is loaded in the search engine."""
@@ -405,9 +382,12 @@ class QueryProcessor:
                 len(unique_results) == 0
             )
 
-            if not unique_results and not needs_research:
+            # if not unique_results and not needs_research:
+            if not unique_results:
+                # if is_personal_batch:
+                #     error_msg = f"Based on your profile, I couldn't find relevant information in your specific policy documents ('{', '.join(self.user_profile.get('policies_owned', []))}') for the question: '{query}'."
                 if is_personal_batch:
-                    error_msg = f"Based on your profile, I couldn't find relevant information in your specific policy documents ('{', '.join(self.user_profile.get('policies_owned', []))}') for the question: '{query}'."
+                    error_msg = f"I couldn't find relevant information in your uploaded documents for the question: '{query}'."
                 else:
                     error_msg = f"No relevant information found in the documents of batch '{target_batch}' for the question: '{query}'."
                 yield "data: " + json.dumps({"content": error_msg, "done": True}) + "\n\n"
@@ -463,6 +443,7 @@ class QueryProcessor:
 
             processing_time = time.time() - start_time
             print(f"Total processing time: {processing_time:.2f}s")
+            # yield "data: " + json.dumps({"done": True}) + "\n\n"
 
         except Exception as e:
             import traceback
@@ -586,3 +567,156 @@ class QueryProcessor:
         except Exception as e:
             print(f"Error during OpenAI API streaming call: {e}")
             yield "data: " + json.dumps({"error": "Sorry, I encountered an error while generating the response. Please try again later or check the system logs."}) + "\n\n"
+
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """Get basic statistics about the search engine state."""
+        if self.search_engine:
+            return self.search_engine.get_stats()
+        return {"error": "Search engine not initialized."}
+
+    def _get_research_objectives(self, intent: Dict[str, bool]) -> str:
+        objectives = []
+        if intent["needs_comparison"]:
+            objectives.append("- Compare with similar policies from other insurers")
+        if intent["asks_about_uncovered_features"]:
+            objectives.append("- Find alternative policies that might cover these features")
+        if intent["requires_external_info"]:
+            objectives.append("- Research general information about this topic")
+        
+        return "\n".join(objectives) if objectives else "- Provide relevant insurance information"
+
+    # new mtd to format combined RAG + research response
+    def _format_combined_response(
+        self, 
+        query: str,
+        rag_results: List[Dict],
+        research_results: Dict[str, Any],
+        intent: Dict[str, bool],
+        is_personal_batch: bool
+    ) -> str:
+        """Format the combined RAG and research results"""
+        if not rag_results and not research_results.get('answer'):
+            return "I couldn't find any relevant information to answer your question."
+            
+        response_parts = []
+        
+        # Generate RAG response if we have results
+        if rag_results:
+            rag_response = self._generate_response(query, rag_results, is_personal_batch)
+            if rag_response:
+                response_parts.append("Based on your policy documents:\n" + rag_response)
+            
+        # Add research results if available
+        if research_results and research_results.get('answer'):
+            research_answer = research_results['answer'].strip()
+            if research_answer:
+                if intent["needs_comparison"] or intent["asks_about_uncovered_features"]:
+                    response_parts.append("\nAdditional options to consider:\n" + research_answer)
+                else:
+                    response_parts.append("\nAdditional information from research:\n" + research_answer)
+                
+        # Format the final response
+        if not response_parts:
+            return "I apologize, but I couldn't find enough information to answer your question comprehensively."
+            
+        return "\n\n".join(response_parts)
+
+    def process_query(self, query: str, batch_id: str = None, user_profile: Optional[Dict] = None) -> str:
+        """Process a query and return the response."""
+        try:
+            # Determine the target batch
+            target_batch = batch_id or self.batch_manager.get_default_batch()
+            if not target_batch:
+                return "Error: No batch specified and no default batch set."
+
+            # Ensure the correct batch's indexes are loaded
+            if not self._ensure_batch_loaded(target_batch):
+                return f"Error: Failed to load or switch to batch '{target_batch}'."
+
+            start_time = time.time()
+            print(f"\nProcessing query for batch: {target_batch}")
+            print(f"Query: {query}")
+
+            # Analyze query intent synchronously for both standard and streaming responses
+            # try:
+            #     intent_response = self.client.chat.completions.create(
+            #         model="gpt-4-1106-preview",
+            #         messages=[{"role": "user", "content": self._get_intent_prompt(query)}],
+            #         response_format={"type": "json_object"},
+            #         temperature=0.1
+            #     )
+            #     intent = json.loads(intent_response.choices[0].message.content)
+            # except Exception as e:
+            #     print(f"Error analyzing intent: {e}")
+            #     intent = {
+            #         "needs_comparison": False,
+            #         "asks_about_uncovered_features": False,
+            #         "requires_external_info": False
+            #     }
+
+            expanded_query = self._expand_query(query)
+            raw_search_results = self.search_engine.hybrid_search(
+                query=expanded_query, top_k=50
+            )
+            print(f"Retrieved {len(raw_search_results)} raw results from hybrid search.")
+
+            is_personal_batch = target_batch.startswith("user_")
+            relevant_results = raw_search_results
+            if is_personal_batch:
+                if self.user_profile:
+                    relevant_results = self._filter_results_by_profile(raw_search_results)
+                else:
+                    print("Warning: Operating in personal batch mode but no user profile loaded.")
+
+            unique_results = self._deduplicate_results(relevant_results)
+            print(f"Retained {len(unique_results)} unique relevant chunks after filtering/deduplication.")
+
+            # Determine if we need deep research
+            # needs_research = (
+            #     intent["needs_comparison"] or
+            #     intent["asks_about_uncovered_features"] or
+            #     intent["requires_external_info"] or
+            #     len(unique_results) == 0
+            # )
+
+            # if not unique_results and not needs_research:
+            if not unique_results:
+                # if is_personal_batch and self.user_profile:
+                #     return f"Based on your profile, I couldn't find relevant information in your specific policy documents ('{', '.join(self.user_profile.get('policies_owned', []))}') for the question: '{query}'."
+                if is_personal_batch:
+                    return f"I couldn't find relevant information in your uploaded documents for the question: '{query}'."
+                else:
+                    return f"No relevant information found in the documents of batch '{target_batch}' for the question: '{query}'."
+
+            # Initialize research results
+            # research_results = {}
+            # if needs_research:
+            #     try:
+            #         researcher = DeepResearch()
+            #         enhanced_query = self._format_enhanced_query(query, unique_results, intent)
+            #         research_results = researcher.research(enhanced_query)
+            #     except Exception as e:
+            #         print(f"Error during deep research: {e}")
+            #         research_results = {"answer": "", "sources": []}
+
+            # Generate response using both RAG and research results
+            # response = self._format_combined_response(
+            #     query=query,
+            #     rag_results=unique_results,
+            #     research_results=research_results,
+            #     intent=intent,
+            #     is_personal_batch=is_personal_batch
+            # )
+
+            response = self._generate_response(query, unique_results, is_personal_batch, user_profile)
+
+            processing_time = time.time() - start_time
+            print(f"Total processing time: {processing_time:.2f}s")
+
+            return response
+
+        except Exception as e:
+            import traceback
+            print(f"An unexpected error occurred in process_query: {e}")
+            traceback.print_exc()
+            return f"An error occurred while processing your query. Please check logs. Error: {e}"

@@ -72,21 +72,57 @@ export default function CustomerChat({ customerId }) {
     }
   };
 
-  // --- Auto-resize and scroll logic (copy from your Chat.jsx) ---
-  const handleInput = (e) => { /* ... */ };
-  const resetTextareaHeight = () => { /* ... */ };
-  const scrollToBottom = () => { /* ... */ };
+  const handleClearHistory = async () => {
+    if (window.confirm(`Are you sure you want to permanently delete this customer's chat history?`)) {
+      try {
+        await api.clearInsurerHistory(customerId);
+        setHistory([]); // Clear local state on success
+      } catch (err) {
+        console.error("Failed to clear history", err);
+        alert(`Failed to clear history: ${err.message}`);
+      }
+    }
+  };
+
+  const handleInput = (e) => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+    }
+  };
+
+  const resetTextareaHeight = () => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+  };
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
   useEffect(scrollToBottom, [history]);
+
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
   };
-  // --- End copy ---
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div className="chat-header">
+        <h3>Customer Query</h3>
+        <button
+          className="btn secondary"
+          onClick={handleClearHistory}
+          disabled={loading || history.length === 0}
+          title="Clear this customer's chat history"
+          style={{ height: '36px', padding: '0 16px', fontSize: '14px' }}
+        >
+          Clear History
+        </button>
+      </div>
       <div className="chat-messages">
         {history.map((m, i) => (
           <div key={i} className={`message ${m.role}`}>

@@ -305,6 +305,46 @@ def upload_policies():
         print(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
     
+def _update_profile_on_delete(user: User, deleted_filenames: list[str]):
+    """
+    Loads a user's profile, removes any policy data associated
+    with the deleted filenames, and saves the profile back.
+    """
+    profile_path = _get_user_profile_path(user)
+    if not profile_path.exists():
+        print(f"No profile found for user {user.id}. Skipping profile update.")
+        return
+
+    try:
+        # Load the existing profile
+        with open(profile_path, "r") as f:
+            profile_data = json.load(f)
+
+        # Check for the 'insurance_policies' dictionary
+        if "insurance_policies" in profile_data and isinstance(profile_data["insurance_policies"], dict):
+            
+            # Create a new dictionary, keeping only the policies that *were not* deleted
+            updated_policies = {
+                filename: policy_data
+                for filename, policy_data in profile_data["insurance_policies"].items()
+                if filename not in deleted_filenames
+            }
+            
+            if len(updated_policies) < len(profile_data["insurance_policies"]):
+                print(f"Profile updated: Removed {len(profile_data['insurance_policies']) - len(updated_policies)} policy entries.")
+                profile_data["insurance_policies"] = updated_policies
+                
+                # Write the updated profile back to the file
+                with open(profile_path, "w") as f:
+                    json.dump(profile_data, f, indent=2)
+            else:
+                print("No matching policies found in profile for deleted files.")
+        
+    except Exception as e:
+        # Log the error but don't fail the deletion process
+        print(f"Warning: Failed to update user profile for user {user.id} after file deletion: {e}")
+        print(traceback.format_exc())
+    
 @app.route('/delete_files', methods=['POST'])
 @jwt_required()
 def delete_files():
@@ -346,7 +386,9 @@ def delete_files():
 
         if deleted_count == 0:
             return jsonify({"error": "No valid files were found to delete"}), 404
-
+        
+        if deleted_files_list:
+            _update_profile_on_delete(user, deleted_files_list)
 
         # 2. Re-process the batch *once*
         # Find all *remaining* document files
@@ -486,6 +528,25 @@ def get_history():
         
     except Exception as e:
         print(f"Error getting history: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/history", methods=["DELETE"])
+@jwt_required()
+def clear_history():
+    """Clears the current user's chat history."""
+    try:
+        user_id_str = get_jwt_identity()
+        user_id_int = int(user_id_str)
+        
+        # Delete all messages for this user
+        num_deleted = Message.query.filter_by(user_id=user_id_int).delete()
+        db.session.commit()
+        
+        return jsonify({"message": f"History cleared. {num_deleted} messages deleted."}), 200
+        
+    except Exception as e:
+        print(f"Error clearing history: {str(e)}")
+        db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
 @app.route("/query", methods=["POST"])
@@ -800,6 +861,44 @@ def upload_for_customer(customer_id):
         
         if not saved_files:
             return jsonify({"error": "No valid files were saved. Check filenames."}), 400
+        
+        # --- Update user_profile.json ---
+        try:
+            profile_path = _get_user_profile_path(customer)
+            
+            existing_profile = {}
+            if profile_path.exists():
+                try:
+                    with open(profile_path, "r") as f:
+                        existing_profile = json.load(f)
+                except json.JSONDecodeError:
+                    existing_profile = {} # Handle empty or corrupted file
+
+            # Get the insurance_policies object, or create a new one
+            insurance_policies = existing_profile.get("insurance_policies", {})
+            
+            new_policies_added = False
+            for filename in processed_filenames:
+                if filename not in insurance_policies:
+                    # Add a new stub using the filename as the key
+                    insurance_policies[filename] = {
+                        "policy_type": "Health", # Default
+                        "insurer": "Unknown",
+                        "plan_name": "Unknown (Uploaded by Insurer)",
+                        "underwriting": {} # This is the key for the underwriting tab
+                    }
+                    new_policies_added = True
+
+            # If we added new policies, update the profile and save the file
+            if new_policies_added:
+                existing_profile["insurance_policies"] = insurance_policies
+                with open(profile_path, "w") as f:
+                    json.dump(existing_profile, f, indent=2)
+                
+        except Exception as e:
+            print(f"Error updating user profile during upload: {e}")
+            print(traceback.format_exc())
+            # Don't fail the whole upload, but log it
 
         print(f"Processing batch '{batch_id}' with {len(saved_files)} files...")
         
@@ -855,14 +954,14 @@ def query_for_customer(customer_id):
             return jsonify({"error": "Missing 'query' in request body"}), 400
 
         # Save the user's question to the database
-        user_message = Message(user_id=insurer_id, role="user", content=q)
+        user_message = Message(user_id=customer_id, role="user", content=q)
         db.session.add(user_message)
         db.session.commit()
 
         # 3. Check if the user's batch exists (have they uploaded docs?)
         if not batch_manager.get_batch_info(batch_id):
             response_text = "I can't answer that yet. Please upload your policy documents first using the 'Upload' button."
-            bot_message = Message(user_id=insurer_id, role="bot", content=response_text)
+            bot_message = Message(user_id=customer_id, role="bot", content=response_text)
             db.session.add(bot_message)
             db.session.commit()
 
@@ -907,7 +1006,7 @@ def query_for_customer(customer_id):
                 # Save the complete bot response to the database
                 complete_response = "".join(full_response)
                 if complete_response:
-                    bot_message = Message(user_id=insurer_id, role="bot", content=complete_response)
+                    bot_message = Message(user_id=customer_id, role="bot", content=complete_response)
                     db.session.add(bot_message)
                     db.session.commit()
 
@@ -977,6 +1076,150 @@ def save_customer_profile(customer_id):
     except Exception as e:
         print(f"Error saving profile: {e}")
         return jsonify({"error": str(e)}), 500
+
+@app.route("/api/insurer/list_files/<int:customer_id>", methods=["GET"])
+@insurer_required()
+def get_insurer_customer_files(customer_id):
+    """(Insurer) Gets the file list for a specific customer."""
+    insurer_id = int(get_jwt_identity())
+    
+    # --- TENANCY CHECK ---
+    customer = db.session.get(User, customer_id)
+    if not customer or customer.created_by_insurer_id != insurer_id:
+        return jsonify({"error": "Customer not found or not managed by you"}), 404
+
+    # --- Reuse logic from /list_files ---
+    batch_id = customer.get_batch_id()
+    user_folder = os.path.join(app.config['UPLOAD_FOLDER'], batch_id)
+
+    if not os.path.exists(user_folder):
+        return jsonify({"files": []})
+
+    files = os.listdir(user_folder)
+    # Filter out system files (user_profile.json)
+    files = [f for f in files if f != 'user_profile.json']
+
+    return jsonify({"files": files})
+
+
+@app.route("/api/insurer/history/<int:customer_id>", methods=["GET"])
+@insurer_required()
+def get_insurer_history(customer_id):
+    """(Insurer) Gets the chat history for a specific customer."""
+    insurer_id = int(get_jwt_identity())
+    
+    # --- TENANCY CHECK ---
+    customer = db.session.get(User, customer_id)
+    if not customer or customer.created_by_insurer_id != insurer_id:
+        return jsonify({"error": "Customer not found or not managed by you"}), 404
+
+    # --- Get history for the CUSTOMER ---
+    messages = Message.query.filter_by(user_id=customer_id).order_by(Message.timestamp.asc()).all()
+    
+    # We need to adjust the role for the Insurer's frontend (CustomerChat.jsx)
+    # It expects 'user' for messages *it* sent.
+    history = []
+    for msg in messages:
+        role_for_frontend = msg.role
+        if msg.role == 'insurer':
+            role_for_frontend = 'user' # So CustomerChat.jsx shows it as "Insurer (You)"
+        
+        history.append({"role": role_for_frontend, "content": msg.content})
+        
+    return jsonify(history), 200
+
+@app.route("/api/insurer/history/<int:customer_id>", methods=["DELETE"])
+@insurer_required()
+def clear_insurer_history(customer_id):
+    """(Insurer) Clears the chat history for a specific customer."""
+    insurer_id = int(get_jwt_identity())
+    
+    # --- TENANCY CHECK ---
+    customer = db.session.get(User, customer_id)
+    if not customer or customer.created_by_insurer_id != insurer_id:
+        return jsonify({"error": "Customer not found or not managed by you"}), 404
+
+    try:
+        # Delete all messages for this *specific customer*
+        num_deleted = Message.query.filter_by(user_id=customer_id).delete()
+        db.session.commit()
+        
+        return jsonify({"message": f"History cleared for {customer.username}. {num_deleted} messages deleted."}), 200
+        
+    except Exception as e:
+        print(f"Error clearing insurer history: {str(e)}")
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/insurer/delete_files/<int:customer_id>", methods=["POST"])
+@insurer_required()
+def delete_files_for_customer(customer_id):
+    """(Insurer) Deletes files for a specific customer."""
+    insurer_id = int(get_jwt_identity())
+    
+    # --- TENANCY CHECK ---
+    customer = db.session.get(User, customer_id)
+    if not customer or customer.created_by_insurer_id != insurer_id:
+        return jsonify({"error": "Customer not found or not managed by you"}), 404
+
+    # --- Reuse logic from /delete_files ---
+    data = request.get_json()
+    filenames = data.get("filenames")
+    if not filenames or not isinstance(filenames, list):
+        return jsonify({"error": "A list of 'filenames' is required"}), 400
+
+    batch_id = customer.get_batch_id()
+    user_doc_dir = Path(app.config['UPLOAD_FOLDER']) / batch_id
+    
+    deleted_count = 0
+    deleted_files_list = []
+    
+    for filename in filenames:
+        safe_filename = secure_filename(filename)
+        if safe_filename != filename:
+            print(f"Skipping invalid filename: {filename}")
+            continue
+        filepath = user_doc_dir / safe_filename
+        if filepath.exists():
+            os.remove(filepath)
+            deleted_count += 1
+            deleted_files_list.append(safe_filename)
+            print(f"Deleted file: {filepath}")
+        else:
+            print(f"File not found, skipping: {filepath}")
+        
+    if deleted_count == 0:
+        return jsonify({"error": "No valid files were found to delete"}), 404
+    
+    if deleted_files_list:
+        _update_profile_on_delete(customer, deleted_files_list)
+
+    # Re-process the batch
+    document_files = []
+    for ext in ['*.pdf', '*.docx', '*.txt', '*.md']:
+        document_files.extend(Path(user_doc_dir).glob(ext))
+
+    if not document_files:
+        # User deleted their last file(s). Remove the batch entirely.
+        if batch_manager.delete_batch(batch_id):
+            print(f"User deleted last files. Batch '{batch_id}' removed.")
+            return jsonify({"message": f"Successfully deleted {deleted_count} files. All policies removed."})
+        else:
+            return jsonify({"error": "Failed to delete final batch"}), 500
+    
+    # User still has files, re-create the batch
+    print(f"Re-processing batch '{batch_id}' with {len(document_files)} remaining files...")
+    success = doc_processor.create_batch(
+        batch_id=batch_id,
+        document_paths=[str(doc) for doc in document_files],
+        batch_name=f"{customer.username}'s Policies",
+        description=f"Personal policies for user {customer.username}"
+    )
+
+    if not success:
+        return jsonify({"error": "Files deleted, but failed to re-process remaining documents"}), 500
+
+    return jsonify({"message": f"Successfully deleted {deleted_count} files and re-processed policies."}), 200
 
 # --- Main Server ---
 def run_api_server(host="0.0.0.0", port=5000):

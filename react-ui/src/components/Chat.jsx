@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { sendQueryStream, getHistory } from '../services/api';
+import { sendQueryStream, getHistory, clearHistory } from '../services/api';
 import MessageFormatter from './MessageFormatter';
 
 const TYPING_PLACEHOLDER = '...'; // A constant for our placeholder
@@ -113,6 +113,21 @@ export default function Chat({ onUploadSuccess }) {
     }
   };
 
+  // Clears the chat history from the local state after confirmation.
+  const handleClearHistory = async () => {
+    if (window.confirm('Are you sure you want to permanently delete your chat history?')) {
+      try {
+        // Call the API to delete from database
+        await clearHistory();
+        // If successful, clear local state
+        setHistory([]);
+      } catch (err) {
+        console.error("Failed to clear history", err);
+        alert(`Failed to clear history: ${err.message}`);
+      }
+    }
+  };
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -131,6 +146,21 @@ export default function Chat({ onUploadSuccess }) {
   return (
     // This 'main' tag is the main chat column
     <main className="chat-main">
+
+      <div className="chat-header">
+        <h3>Chat</h3>
+        <button
+          className="btn secondary"
+          onClick={handleClearHistory}
+          disabled={loading || history.length === 0}
+          title="Clear chat history"
+          // Make button smaller to fit header
+          style={{ height: '36px', padding: '0 16px', fontSize: '14px' }} 
+        >
+          Clear History
+        </button>
+      </div>
+
       {/* This div handles the scrolling messages */}
       <div className="chat-messages">
         {history.length === 0 && !loading && (
@@ -141,7 +171,9 @@ export default function Chat({ onUploadSuccess }) {
         {loading && history.length === 0 && (
           <div className="empty-state">Loading history...</div>
         )}
-        {history.map((m, i) => (
+        {history.map((m, i) => {
+          const header = m.role === 'user' ? 'You' : (m.role === 'insurer' ? 'Insurer' : 'Bot');
+          return (
           <div key={i} className={`message ${m.role}`}>
             <div className="message-header">{m.role === 'user' ? 'You' : 'Bot'}</div>
             <div className="message-content">
@@ -162,7 +194,8 @@ export default function Chat({ onUploadSuccess }) {
               }
             </div>
           </div>
-        ))}
+        );
+        })}
         <div ref={messagesEndRef} />
       </div>
 
