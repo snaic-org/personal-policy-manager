@@ -516,16 +516,6 @@ export async function sendInsurerQueryStream(customerId, query, onChunk, onCompl
             } else if (data.answer) {
               // 3. Handle deep research 'answer'
               contentChunk = data.answer;
-            } else if (data.info) {
-              // 4. Handle 'info' messages
-              contentChunk = `[Info: ${data.info}]\n`;
-            } else if (data.warning) {
-              // 5. Handle 'warning' messages
-              contentChunk = `[Warning: ${data.warning}]\n`;
-            } else if (data.followup_questions && data.followup_questions.length > 0) {
-              // 6. Handle follow-up questions
-              const questions = data.followup_questions.map(q => `- ${q}`).join('\n');
-              contentChunk = `I have some follow-up questions:\n${questions}\n`;
             }
 
             // Send the chunk if we found one
@@ -533,17 +523,11 @@ export async function sendInsurerQueryStream(customerId, query, onChunk, onCompl
               onChunk(contentChunk);
             }
             
-            // 7. Handle 'done' signal
+            // Handle 'done' signal
             if (data.done) {
               onComplete();
               return;
             }
-            
-            // if (data.content) onChunk(data.content);
-            // if (data.done) {
-            //   onComplete();
-            //   return;
-            // }
           } catch (e) { console.error('Error parsing SSE data:', e); }
         }
       }
