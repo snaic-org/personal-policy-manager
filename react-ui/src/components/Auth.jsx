@@ -4,13 +4,11 @@ import { login, register, registerInsurer } from '../services/api';
 export default function Auth({ onLogin }) {
   const [authMode, setAuthMode] = useState('login');
 
-  // Auth fields
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
   const [inviteCode, setInviteCode] = useState('');
 
-  // Profile fields
   const [name, setName] = useState('');
   const [dob, setDob] = useState('');
   const [gender, setGender] = useState('');
@@ -26,8 +24,8 @@ export default function Auth({ onLogin }) {
     
     try {
       if (authMode === 'login') {
-        const loginData = await login(username, password); // Returns { access_token, role }
-        onLogin(loginData); // Pass full data to App.jsx
+        const loginData = await login(username, password);
+        onLogin(loginData);
       } else {
         // Common registration validation
         if (password !== passwordConfirm) {
@@ -92,7 +90,6 @@ export default function Auth({ onLogin }) {
             />
           </div>
 
-          {/* Show for both registration types */}
           {isRegistering && (
             <div className="form-group">
               <label htmlFor="passwordConfirm">Re-enter Password</label>
@@ -171,7 +168,7 @@ export default function Auth({ onLogin }) {
               <label htmlFor="inviteCode">Invite Code</label>
               <input
                 id="inviteCode"
-                type="password" // Use password type to hide the code
+                type="password"
                 value={inviteCode}
                 onChange={e => setInviteCode(e.target.value)}
                 required
@@ -189,7 +186,6 @@ export default function Auth({ onLogin }) {
           </button>
         </form>
         
-        {/* --- MODIFICATION: New auth mode toggles --- */}
         {authMode === 'login' && (
           <>
             <button

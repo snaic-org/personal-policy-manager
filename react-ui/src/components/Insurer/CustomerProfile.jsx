@@ -1,5 +1,5 @@
 import React from 'react';
-import * as api from '../../services/api.js';
+import { saveProfile } from '../../services/api';
 import CustomerProfileForm from './CustomerProfileForm';
 
 /**
@@ -16,11 +16,10 @@ export default function CustomerProfile({
   onDataChanged 
 }) {
   
-  // This function is passed to the children form
   const handleProfileUpdate = async (updatedProfileData) => {
     try {
-      await api.saveInsurerProfile(customerId, updatedProfileData);
-      onDataChanged(); // <-- Call parent's refresh function
+      await saveProfile(updatedProfileData, customerId);
+      onDataChanged();
       return { success: true };
     } catch (e) {
       console.error("Failed to save profile:", e);
@@ -34,7 +33,6 @@ export default function CustomerProfile({
 
   return (
     <div style={{ padding: '20px', overflowY: 'auto', height: '100%' }}>
-      {/* Pass the profile data and the save handler to the form */}
       <CustomerProfileForm
         customerId={customerId}
         initialProfile={profile}

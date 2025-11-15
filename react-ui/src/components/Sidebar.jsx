@@ -9,7 +9,6 @@ export default function Sidebar({
 }) {
   return (
     <aside className="sidebar">
-      {/* User info section at the top */}
       <div className="sidebar-user-info">
         <h4 style={{ margin: 0, color: '#555', fontWeight: 500 }}>
           Welcome:
@@ -19,7 +18,6 @@ export default function Sidebar({
         </h3>
       </div>
 
-      {/* This part will scroll if content is long */}
       <div className="sidebar-content">
         <Upload onUploadSuccess={onUploadSuccess} />
         <UploadedFiles

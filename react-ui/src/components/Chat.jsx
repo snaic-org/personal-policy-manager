@@ -2,50 +2,45 @@ import React, { useState, useRef, useEffect } from 'react';
 import { sendQueryStream, getHistory, clearHistory } from '../services/api';
 import MessageFormatter from './MessageFormatter';
 
-const TYPING_PLACEHOLDER = '...'; // A constant for our placeholder
+const TYPING_PLACEHOLDER = '...';
 
 export default function Chat({ onUploadSuccess }) {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [history, setHistory] = useState([]);
   const messagesEndRef = useRef(null);
-  const textareaRef = useRef(null); // For auto-resize
-  const [refresh, setRefresh] = useState(false); // Already exists, but wasn't used
+  const textareaRef = useRef(null);
+  const [refresh, setRefresh] = useState(false);
 
   useEffect(() => {
-    // Load chat history when component mounts
     setLoading(true);
     getHistory()
       .then(data => {
-        setHistory(data); // Set the history from the database
+        setHistory(data);
       })
       .catch(err => {
         console.error("Failed to load history", err);
-        // Add a local-only error message to the chat
         addMessage('bot', `Error loading chat history: ${err.message}`);
       })
       .finally(() => {
         setLoading(false);
       });
-  }, []); // Empty dependency array means this runs only once on mount
+  }, []);
 
   const addMessage = (role, content) => {
      setHistory(prev => [...prev, { role, content }]);
   };
 
-  // This function gets called by the Upload component via App.jsx
   const handleUpload = () => {
-     onUploadSuccess(); // Let App.jsx know to refresh the file list
+     onUploadSuccess();
      addMessage('bot', 'Your documents have been processed. You can now ask questions about them.');
   };
   
-  // This is passed to the Sidebar > Upload component
   const handleUploadSuccess = () => {
      addMessage('bot', 'Your documents have been processed. You can now ask questions about them.');
-     setRefresh(prev => !prev); // triggers UploadedFiles to re-fetch
+     setRefresh(prev => !prev);
   };
 
-  // Auto-resize logic
   const handleInput = (e) => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -58,7 +53,6 @@ export default function Chat({ onUploadSuccess }) {
       textareaRef.current.style.height = 'auto';
     }
   };
-  // End auto-resize logic
 
   const handleSend = async () => {
     if (!query.trim()) return;
@@ -70,8 +64,7 @@ export default function Chat({ onUploadSuccess }) {
     setQuery('');
     resetTextareaHeight();
 
-    // Add placeholder for bot message that will be updated as chunks arrive
-    const botMessageIndex = history.length + 1; // User message was just added
+    const botMessageIndex = history.length + 1;
     addMessage('bot', '');
 
     try {
@@ -79,21 +72,15 @@ export default function Chat({ onUploadSuccess }) {
 
       await sendQueryStream(
         currentQuery,
-        // onChunk: called for each content chunk
         (chunk) => {
           streamedContent += chunk;
-          // Update the bot message with accumulated content
           setHistory(prev => {
             const updated = [...prev];
             updated[botMessageIndex] = { role: 'bot', content: streamedContent };
             return updated;
           });
         },
-        // onComplete: called when streaming is done
-        () => {
-          setLoading(false);
-        },
-        // onError: called if there's an error
+        () => { setLoading(false); },
         (error) => {
           setHistory(prev => {
             const updated = [...prev];
@@ -113,13 +100,10 @@ export default function Chat({ onUploadSuccess }) {
     }
   };
 
-  // Clears the chat history from the local state after confirmation.
   const handleClearHistory = async () => {
     if (window.confirm('Are you sure you want to permanently delete your chat history?')) {
       try {
-        // Call the API to delete from database
         await clearHistory();
-        // If successful, clear local state
         setHistory([]);
       } catch (err) {
         console.error("Failed to clear history", err);
@@ -144,7 +128,6 @@ export default function Chat({ onUploadSuccess }) {
   };
 
   return (
-    // This 'main' tag is the main chat column
     <main className="chat-main">
 
       <div className="chat-header">
@@ -154,14 +137,12 @@ export default function Chat({ onUploadSuccess }) {
           onClick={handleClearHistory}
           disabled={loading || history.length === 0}
           title="Clear chat history"
-          // Make button smaller to fit header
           style={{ height: '36px', padding: '0 16px', fontSize: '14px' }} 
         >
           Clear History
         </button>
       </div>
 
-      {/* This div handles the scrolling messages */}
       <div className="chat-messages">
         {history.length === 0 && !loading && (
           <div className="empty-state">
@@ -180,8 +161,6 @@ export default function Chat({ onUploadSuccess }) {
               {m.role === 'user' ? (
                 m.content
               ) :
-              // Check if it's the last message, it's a bot,
-              // content is empty, AND we are in the loading state.
               i === history.length - 1 && m.content === '' && loading ? (
                 <div className="loading-indicator">
                   <span></span>
@@ -199,7 +178,6 @@ export default function Chat({ onUploadSuccess }) {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* This div is the input area, fixed to the bottom of the column */}
       <div className="chat-input-container">
         <div className="input-group">
           <textarea

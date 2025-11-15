@@ -7,7 +7,6 @@ export default function ProfileForm() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  // 1. Fetches its own data
   useEffect(() => {
     setLoading(true);
     getProfile()
@@ -22,11 +21,9 @@ export default function ProfileForm() {
       });
   }, []);
 
-  // 2. Defines its own save function
   const handleSave = async (updatedProfile) => {
     try {
       const res = await saveProfile(updatedProfile);
-      // After saving, refetch the profile to ensure UI is in sync
       const refreshedProfile = await getProfile();
       setProfile(refreshedProfile);
       return { success: true, message: res.message };
@@ -38,7 +35,6 @@ export default function ProfileForm() {
   if (loading) return <p>Loading profile...</p>;
   if (error) return <p className="form-error">{error}</p>;
 
-  // 3. Renders the reusable form
   return (
     <ProfileFormFields
       initialProfile={profile}

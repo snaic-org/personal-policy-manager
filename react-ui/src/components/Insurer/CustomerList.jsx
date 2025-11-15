@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import * as api from '../../services/api';
+import { getInsurerCustomers, createCustomer } from '../../services/api';
 
 export default function CustomerList({ selectedCustomerId, onSelectCustomer }) {
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  // For the create form
   const [username, setUsername] = useState('');
   const [name, setName] = useState('');
   const [dob, setDob] = useState('');
@@ -20,7 +19,7 @@ export default function CustomerList({ selectedCustomerId, onSelectCustomer }) {
   const fetchCustomers = async () => {
     setLoading(true);
     try {
-      const data = await api.getInsurerCustomers();
+      const data = await getInsurerCustomers();
       setCustomers(data);
     } catch (err) {
       setError(err.message);
@@ -54,11 +53,11 @@ export default function CustomerList({ selectedCustomerId, onSelectCustomer }) {
 
     try {
       const profileData = { username, name, dob, gender, smokingStatus };
-      const res = await api.createCustomer(profileData);
+      const res = await createCustomer(profileData);
 
       setFormMessage(`Success! New password: ${res.password}`);
       resetForm();
-      fetchCustomers(); // Refresh the list
+      fetchCustomers();
     } catch (err) {
       setFormError(err.message);
     } finally {

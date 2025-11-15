@@ -38,7 +38,6 @@ export default function CustomerLayout({ user }) {
   const renderTabContent = () => {
     switch (activeTab) {
       case 'chat':
-        // Chat component is full-width by default inside its container
         return <Chat onUploadSuccess={handleUploadSuccess} />;
       
       case 'profile':
@@ -82,10 +81,6 @@ export default function CustomerLayout({ user }) {
           </button>
         </div>
 
-        {/* This 'tab-content' div contains either a 
-          full-width component (Chat) or a constrained-width div 
-          (Profile/Policies), achieving the desired effect.
-        */}
         <div className="tab-content" style={{ flex: 1, overflow: 'hidden' }}>
           {renderTabContent()}
         </div>

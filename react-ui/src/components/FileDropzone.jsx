@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-// You can keep the filter logic inside or move it to a prop
 const ACCEPTED_TYPES = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -26,9 +25,6 @@ export default function FileDropzone({
   const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef(null);
 
-  // This effect ensures that if the parent component clears the
-  // 'selectedFiles' array (e.g., after an upload),
-  // we reset the <input> element's value.
   useEffect(() => {
     if (selectedFiles.length === 0 && inputRef.current) {
       inputRef.current.value = null;

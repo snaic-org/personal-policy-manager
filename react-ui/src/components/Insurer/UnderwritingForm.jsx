@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import * as api from '../../services/api';
+import { saveProfile } from '../../services/api';
 
 export default function UnderwritingForm({
   customerId,
@@ -18,10 +18,8 @@ export default function UnderwritingForm({
   useEffect(() => {
     setProfile(initialProfile);
     
-    // --- Set the default selected file ---
-    // When the profile loads, set the dropdown to the first policy
     if (initialProfile?.insurance_policies && Object.keys(initialProfile.insurance_policies).length > 0) {
-      if (!selectedFilename) { // Only set if not already set
+      if (!selectedFilename) {
         setSelectedFilename(Object.keys(initialProfile.insurance_policies)[0]);
       }
     }
@@ -32,8 +30,6 @@ export default function UnderwritingForm({
     setError(parentError || '');
   }, [parentError]);
 
-  // handleInputChange and handleNotesBlur are unchanged
-  // as they already accept 'filename' as an argument.
   const handleInputChange = (filename, field, value) => {
     setProfile(prevProfile => {
       const updatedUnderwriting = {
@@ -118,7 +114,7 @@ export default function UnderwritingForm({
 
     setIsSaving(true);
     try {
-      const res = await api.saveInsurerProfile(customerId, profile);
+      const res = await saveProfile(profile, customerId);
       setMessage(res.message);
       onDataChanged();
     } catch (err) {
@@ -161,7 +157,6 @@ export default function UnderwritingForm({
       </div>
 
 
-      {/* We check 'policy' to make sure selectedFilename is valid */}
       {policy && (
         <div style={{ border: '1px solid #ddd', borderRadius: '8px', padding: '20px' }}>
           <h4 style={{ margin: '0 0 16px', borderBottom: '1px solid #eee', paddingBottom: '8px', wordBreak: 'break-all' }}>
@@ -174,7 +169,6 @@ export default function UnderwritingForm({
             <select
               className="form-input"
               value={currentRiskClass || 'standard'}
-              // Pass the selectedFilename to the handler
               onChange={e => handleInputChange(selectedFilename, 'risk_classification', e.target.value)}
             >
               <option value="standard">Standard</option>

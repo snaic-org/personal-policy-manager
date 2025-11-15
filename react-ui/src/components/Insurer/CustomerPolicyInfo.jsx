@@ -1,5 +1,5 @@
 import React from 'react';
-import * as api from '../../services/api';
+import { saveProfile } from '../../services/api';
 import PolicyInfoForm from '../Shared/PolicyInfoForm';
 
 /**
@@ -14,11 +14,10 @@ export default function CustomerPolicyInfo({
   onDataChanged 
 }) {
   
-  // This save handler is specific to the Insurer API
   const handleSave = async (updatedProfileData) => {
     try {
-      const res = await api.saveInsurerProfile(customerId, updatedProfileData);
-      onDataChanged(); // <-- Call parent's refresh function
+      const res = await saveProfile(updatedProfileData, customerId);
+      onDataChanged();
       return { success: true, message: res.message };
     } catch (e) {
       console.error("Failed to save profile:", e);
@@ -26,7 +25,6 @@ export default function CustomerPolicyInfo({
     }
   };
 
-  // Parent (CustomerDashboard) handles loading/error, so we pass isLoading=false
   return (
     <div style={{ padding: '20px', overflowY: 'auto', height: '100%' }}>
       <PolicyInfoForm

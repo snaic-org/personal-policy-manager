@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import * as api from '../../services/api';
+import { getProfile, getUserFiles } from '../../services/api';
 import CustomerChat from './CustomerChat';
 import CustomerDocuments from './CustomerDocuments';
 import UnderwritingForm from './UnderwritingForm';
@@ -24,7 +24,6 @@ const tabButton = (isActive) => ({
   marginBottom: '-1px',
 });
 
-// --- Wrapper for constrained tabs ---
 const ConstrainedTabView = ({ children }) => (
   <div style={{ 
     maxWidth: '900px', 
@@ -50,8 +49,8 @@ export default function CustomerDashboard({ customerId }) {
     setError('');
     try {
       const [profileData, filesData] = await Promise.all([
-        api.getInsurerProfile(customerId),
-        api.getInsurerCustomerFiles(customerId)
+        getProfile(customerId),
+        getUserFiles(customerId)
       ]);
       
       if (profileData.insurance_policies) {
@@ -157,9 +156,6 @@ export default function CustomerDashboard({ customerId }) {
         </button>
       </div>
       
-      {/* This 'tab-content' div contains either a 
-        full-width component (Chat) or a constrained-width div (all other tabs).
-      */}
       <div className="tab-content" style={{ flex: 1, overflow: 'hidden' }}>
         {renderTabContent()}
       </div>
