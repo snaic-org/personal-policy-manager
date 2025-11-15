@@ -528,54 +528,61 @@ def stream_customer_query(target_customer, actor):
     data = request.get_json()
     return _query_stream_logic(target_customer, data)
 
+@app.route("/api/data/files/<int:customer_id>/<filename>", methods=["GET"])
+@get_target_customer 
+def serve_customer_file_for_insurer(target_customer, actor, filename):
+    """(Insurer-only) Securely serves a specific file for a specific customer."""
+    try:
+        safe_filename = secure_filename(filename)
+        if not safe_filename or safe_filename != filename:
+            return jsonify({"error": "Invalid filename"}), 400
+
+        batch_id = target_customer.get_batch_id()
+        user_folder = Path(app.config['UPLOAD_FOLDER']) / batch_id
+        file_path = user_folder / safe_filename
+
+        if not file_path.resolve().is_relative_to(user_folder.resolve()):
+            return jsonify({"error": "Unauthorized access"}), 403
+        if not file_path.exists():
+            return jsonify({"error": "File not found"}), 404
+
+        content_type = 'application/octet-stream'
+        if '.pdf' in safe_filename.lower(): content_type = 'application/pdf'
+        elif '.docx' in safe_filename.lower(): content_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        elif '.txt' in safe_filename.lower(): content_type = 'text/plain'
+        
+        return send_file(
+            file_path,
+            mimetype=content_type,
+            as_attachment=False,
+            download_name=safe_filename
+        )
+    except Exception as e:
+        print(f"Error in serve_customer_file_for_insurer: {e}")
+        return jsonify({"error": "Failed to serve file"}), 500
+
 # --- File Serving ---
 
 @app.route('/files/<filename>', methods=['GET'])
 @jwt_required()
 def serve_file(filename):
-    """Serves a file from the authenticated user's document folder."""
+    """(Customer-Only) Serves a file from the *authenticated customer's* folder."""
     try:
         actor_id = int(get_jwt_identity())
         actor = db.session.get(User, actor_id)
         if not actor:
             return jsonify({"error": "User not found"}), 404
         
+        if actor.role == 'insurer':
+             return jsonify({"error": "Insurer must use the customer-specific file URL"}), 403
+        if actor.role != 'customer':
+             return jsonify({"error": "Unauthorized role"}), 403
+        target_customer = actor # The actor is the customer
+        
         safe_filename = secure_filename(filename)
         if not safe_filename or safe_filename != filename:
             return jsonify({"error": "Invalid filename"}), 400
-
-        target_customer = None
-        
-        if actor.role == 'customer':
-            target_customer = actor
-        elif actor.role == 'insurer':
-            # This is tricky. How do we know *which* customer's file it is?
-            # We have to find the user based on the batch_id.
-            # This is a flaw in the original design.
-            # Let's assume for now the insurer *can't* download files
-            # until we have a better way to map filename to user.
-            # ...
-            # A-HA! The file is in a *folder* named `user_1`, `user_2` etc.
-            # We can't know which user it is from filename alone.
-            # The ORIGINAL code had this flaw too.
-            #
-            # Let's fix this. We'll require the `customer_id` for insurers.
-            # But... the citation links don't have that.
-            #
-            # FOR NOW: We will assume `/files/<filename>` is ONLY for customers
-            # viewing their own files. This is a security patch.
             
-            # --- SECURITY PATCH ---
-            if actor.role == 'insurer':
-                 return jsonify({"error": "Insurer file download not supported via this endpoint. Use customer-specific link."}), 403
-            # --- END PATCH ---
-            
-            target_customer = actor # (This line is now only for customers)
-
-        if not target_customer:
-            return jsonify({"error": "Unauthorized"}), 403
-            
-        # Construct path to user's file
         batch_id = target_customer.get_batch_id()
         user_folder = Path(app.config['UPLOAD_FOLDER']) / batch_id
         file_path = user_folder / safe_filename
@@ -592,6 +599,7 @@ def serve_file(filename):
         
         return send_file(file_path, mimetype=content_type, as_attachment=False, download_name=safe_filename)
     except Exception as e:
+        print(f"Error in serve_file (customer): {e}")
         return jsonify({"error": "Failed to serve file"}), 500
     
 # --- Insurer-Only Endpoints ---

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { uploadPolicies, deletePolicies } from '../../services/api';
+import { uploadPolicies, deletePolicies, downloadFile } from '../../services/api';
 import FileDropzone from '../FileDropzone';
 import FileDisplayList from '../FileDisplayList';
 
@@ -39,6 +39,7 @@ export default function CustomerDocuments({ customerId, files, onDataChanged }) 
     if (!window.confirm(`Delete ${filesToDelete.length} file(s) for this customer?`)) return;
     
     setIsDeleting(true);
+    setUploadError(null);
     try {
       await deletePolicies(filesToDelete, customerId);
       onDataChanged();
@@ -50,15 +51,14 @@ export default function CustomerDocuments({ customerId, files, onDataChanged }) 
   };
 
   const handleListDownload = async (filename) => {
-    // Assuming an API function exists. If not, this can be removed.
-    // For now, it just logs to the console.
-    console.log('Download requested for:', customerId, filename);
-    setListError('Download is not implemented for customer files yet.');
-    // try {
-    //   await downloadForCustomer(customerId, filename);
-    // } catch (err) {
-    //   setListError(err.message);
-    // }
+    setUploadError(null);
+    setUploadMessage('');
+
+    try {
+      await downloadFile(filename, customerId);
+    } catch (err) {
+      setUploadError(err.message);
+    }
   };
 
   return (

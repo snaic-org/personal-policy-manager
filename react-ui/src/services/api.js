@@ -287,13 +287,22 @@ export async function sendQueryStream(query, onChunk, onComplete, onError, custo
 // --- File Download Functions ---
 
 /**
- * Downloads a file. NOTE: This only works for the LOGGED-IN customer
- * viewing their own files, due to security constraints in the backend.
+ * Downloads a file.
+ * If customerId is provided (Insurer), uses the secure endpoint.
+ * If not (Customer), uses the base /files/ endpoint.
  * @param {string} filename - The name of the file to download.
+ * @param {number|null} customerId - Optional customer ID for insurer requests.
  */
-export async function downloadFile(filename) {
+export async function downloadFile(filename, customerId = null) {
+  let url;
+  if (customerId) {
+    url = `${BASE}/api/data/files/${customerId}/${filename}`;
+  } else {
+    url = `${BASE}/files/${filename}`;
+  }
+  
   try {
-    const response = await fetch(`${BASE}/files/${filename}`, {
+    const response = await fetch(url, {
       headers: { ...getAuthHeader() }
     });
 

@@ -127,7 +127,7 @@ export default function CustomerChat({ customerId }) {
               {i === history.length - 1 && m.content === '' && loading ? (
                 <div className="loading-indicator"><span></span><span></span><span></span></div>
               ) : (
-                <MessageFormatter content={m.content} />
+                <MessageFormatter content={m.content} customerId={customerId} />
               )}
             </div>
           </div>
