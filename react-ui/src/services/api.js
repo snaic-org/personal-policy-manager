@@ -29,11 +29,19 @@ export async function login(username, password) {
 }
 
 // Customer Registration
-export async function register(username, password, passwordConfirm) {
+export async function register(username, password, passwordConfirm, profileData) {
   const res = await fetch(`${BASE}/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password, passwordConfirm })
+    body: JSON.stringify({
+      username,
+      password,
+      passwordConfirm,
+      name: profileData.name,
+      date_of_birth: profileData.dob,
+      gender: profileData.gender,
+      smoking_status: profileData.smokingStatus
+    })
   });
 
   if (!res.ok) {
@@ -378,14 +386,20 @@ export async function getInsurerCustomers() {
 /**
  * (Insurer) Create a new customer.
  */
-export async function createCustomer(username) {
+export async function createCustomer(profileData) {
   const res = await fetch(`${BASE}/api/insurer/customers`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...getAuthHeader()
     },
-    body: JSON.stringify({ username })
+    body: JSON.stringify({
+      username: profileData.username,
+      name: profileData.name,
+      date_of_birth: profileData.dob,
+      gender: profileData.gender,
+      smoking_status: profileData.smokingStatus
+    })
   });
   if (!res.ok) throw new Error((await res.json()).error);
   return res.json(); // Returns { message, customer_id, username, password }

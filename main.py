@@ -133,12 +133,20 @@ def customer_required():
 def register():
     """Handles PUBLIC customer registration."""
     data = request.get_json()
+    
+    # Auth fields
     username = data.get("username")
     password = data.get("password")
     password_confirm = data.get("passwordConfirm")
-
-    if not username or not password or not password_confirm:
-        return jsonify({"error": "Username and password, and password confirmation are required"}), 400
+    
+    # Profile fields
+    name = data.get("name")
+    date_of_birth = data.get("date_of_birth")
+    gender = data.get("gender")
+    smoking_status = data.get("smoking_status")
+    
+    if not all([username, password, password_confirm, name, date_of_birth, gender, smoking_status]):
+        return jsonify({"error": "All fields are required"}), 400
 
     if password != password_confirm:
         return jsonify({"error": "Passwords do not match"}), 400
@@ -151,6 +159,15 @@ def register():
     
     db.session.add(new_user)
     db.session.commit()
+    
+    # Create user_profile.json
+    profile_data = {
+        "name": name,
+        "date_of_birth": date_of_birth,
+        "gender": gender,
+        "smoking_status": smoking_status
+    }
+    _create_user_profile(new_user, profile_data)
     
     # Also create their document upload directory
     user_doc_dir = Path(app.config['UPLOAD_FOLDER']) / new_user.get_batch_id()
@@ -233,6 +250,29 @@ def get_user_info():
         print(f"Error getting user info: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+def _create_user_profile(user: User, profile_data: dict[str, any]):
+    """
+    Saves the initial profile data for a new user.
+    """
+    profile_path = _get_user_profile_path(user)
+    
+    # Define the full profile structure
+    new_profile = {
+        "name": profile_data.get("name"),
+        "date_of_birth": profile_data.get("date_of_birth"),
+        "gender": profile_data.get("gender"),
+        "smoking_status": profile_data.get("smoking_status"),
+        "insurance_policies": {} # Initialize as empty
+    }
+    
+    try:
+        with open(profile_path, "w") as f:
+            json.dump(new_profile, f, indent=2)
+        print(f"Successfully created user_profile.json for user {user.id}")
+    except Exception as e:
+        print(f"Error creating user_profile.json for user {user.id}: {e}")
+        # Note: In a real app, you might want to roll back the user creation
+        # if this step fails, but for now we'll just log it.
 
 # --- Document Management Endpoints ---
 
@@ -777,9 +817,15 @@ def _get_user_profile_path(user: User) -> Path:
 @insurer_required()
 def create_customer():
     data = request.get_json()
+    
     username = data.get("username")
-    if not username:
-        return jsonify({"error": "Username is required"}), 400
+    name = data.get("name")
+    date_of_birth = data.get("date_of_birth")
+    gender = data.get("gender")
+    smoking_status = data.get("smoking_status")
+    
+    if not all([username, name, date_of_birth, gender, smoking_status]):
+        return jsonify({"error": "All fields (Username, Name, DOB, Gender, Smoking Status) are required"}), 400
 
     if User.query.filter_by(username=username).first():
         return jsonify({"error": "Username already exists"}), 409
@@ -797,14 +843,23 @@ def create_customer():
     )
     new_customer.set_password(password)
 
-    # Also create their document upload directory
-    user_doc_dir = Path(app.config['UPLOAD_FOLDER']) / new_customer.get_batch_id()
-    user_doc_dir.mkdir(parents=True, exist_ok=True)
 
     db.session.add(new_customer)
     db.session.commit()
+    
+    # Create user_profile.json
+    profile_data = {
+        "name": name,
+        "date_of_birth": date_of_birth,
+        "gender": gender,
+        "smoking_status": smoking_status
+    }
+    _create_user_profile(new_customer, profile_data)
 
-    # Return the credentials *once* to the insurer
+    # Also create their document upload directory
+    user_doc_dir = Path(app.config['UPLOAD_FOLDER']) / new_customer.get_batch_id()
+    user_doc_dir.mkdir(parents=True, exist_ok=True)
+    
     return jsonify({
         "message": "Customer created successfully",
         "customer_id": new_customer.id,

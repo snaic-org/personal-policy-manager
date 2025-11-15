@@ -7,7 +7,12 @@ export default function CustomerList({ selectedCustomerId, onSelectCustomer }) {
   const [error, setError] = useState('');
 
   // For the create form
-  const [newUsername, setNewUsername] = useState('');
+  const [username, setUsername] = useState('');
+  const [name, setName] = useState('');
+  const [dob, setDob] = useState('');
+  const [gender, setGender] = useState('');
+  const [smokingStatus, setSmokingStatus] = useState('');
+
   const [formMessage, setFormMessage] = useState('');
   const [formError, setFormError] = useState('');
   const [isCreating, setIsCreating] = useState(false);
@@ -28,19 +33,31 @@ export default function CustomerList({ selectedCustomerId, onSelectCustomer }) {
     fetchCustomers();
   }, []);
 
+  const resetForm = () => {
+    setUsername('');
+    setName('');
+    setDob('');
+    setGender('');
+    setSmokingStatus('');
+  };
+
   const handleCreateCustomer = async (e) => {
     e.preventDefault();
-    if (!newUsername) {
-      setFormError('Username is required.');
+    if (!username || !name || !dob || !gender || !smokingStatus) {
+      setFormError('All fields are required.');
       return;
     }
+
     setIsCreating(true);
     setFormError('');
     setFormMessage('');
+
     try {
-      const res = await api.createCustomer(newUsername);
+      const profileData = { username, name, dob, gender, smokingStatus };
+      const res = await api.createCustomer(profileData);
+
       setFormMessage(`Success! New password: ${res.password}`);
-      setNewUsername('');
+      resetForm();
       fetchCustomers(); // Refresh the list
     } catch (err) {
       setFormError(err.message);
@@ -55,17 +72,71 @@ export default function CustomerList({ selectedCustomerId, onSelectCustomer }) {
         <h4>Create New Customer</h4>
         <form onSubmit={handleCreateCustomer}>
           <div className="form-group" style={{ marginBottom: '10px' }}>
-            <label htmlFor="new-username" style={{ marginBottom: '4px', fontSize: '14px' }}>Username</label>
+            <label htmlFor="new-username" style={{ marginBottom: '4px', fontSize: '14px' }}>Username (for login)</label>
             <input
               id="new-username"
               type="text"
               className="form-input"
-              value={newUsername}
-              onChange={e => setNewUsername(e.target.value)}
+              value={username}
+              onChange={e => setUsername(e.target.value)}
               placeholder="e.g., john_doe"
+              required
             />
           </div>
-          <button type="submit" className="btn primary" disabled={isCreating} style={{ width: '100%' }}>
+          <div className="form-group" style={{ marginBottom: '10px' }}>
+            <label htmlFor="new-name" style={{ marginBottom: '4px', fontSize: '14px' }}>Full Name</label>
+            <input
+              id="new-name"
+              type="text"
+              className="form-input"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="e.g., John Doe"
+              required
+            />
+          </div>
+          <div className="form-group" style={{ marginBottom: '10px' }}>
+            <label htmlFor="new-dob" style={{ marginBottom: '4px', fontSize: '14px' }}>Date of Birth</label>
+            <input
+              id="new-dob"
+              type="date"
+              className="form-input"
+              value={dob}
+              onChange={e => setDob(e.target.value)}
+              required
+            />
+          </div>
+          <div className="form-group" style={{ marginBottom: '10px' }}>
+            <label htmlFor="new-gender" style={{ marginBottom: '4px', fontSize: '14px' }}>Gender</label>
+            <select
+              id="new-gender"
+              className="form-input"
+              value={gender}
+              onChange={e => setGender(e.target.value)}
+              required
+            >
+              <option value="">Select gender</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+            </select>
+          </div>
+          <div className="form-group" style={{ marginBottom: '10px' }}>
+            <label htmlFor="new-smoking" style={{ marginBottom: '4px', fontSize: '14px' }}>Smoking Status</label>
+            <select
+              id="new-smoking"
+              className="form-input"
+              value={smokingStatus}
+              onChange={e => setSmokingStatus(e.target.value)}
+              required
+            >
+              <option value="">Select smoking status</option>
+              <option value="non-smoker">Non-smoker</option>
+              <option value="smoker">Smoker</option>
+              <option value="ex-smoker">Ex-smoker</option>
+            </select>
+          </div>
+          
+          <button type="submit" className="btn primary" disabled={isCreating} style={{ width: '100%', marginTop: '10px' }}>
             {isCreating ? 'Creating...' : 'Create Customer'}
           </button>
           {formError && <p className="form-error" style={{ margin: '10px 0 0' }}>{formError}</p>}
