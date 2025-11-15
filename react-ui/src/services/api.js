@@ -1,13 +1,5 @@
 const BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
-// function parseJwt(token) {
-//   try {
-//     return JSON.parse(atob(token.split('.')[1]));
-//   } catch (e) {
-//     return null;
-//   }
-// }
-
 // --- Auth Functions ---
 
 export async function login(username, password) {
