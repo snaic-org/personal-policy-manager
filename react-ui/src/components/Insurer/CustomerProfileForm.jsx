@@ -8,9 +8,6 @@ import ProfileFormFields from '../Shared/ProfileFormFields';
  */
 export default function CustomerProfileForm({ customerId, initialProfile, onSave }) {
   
-  // Renders the reusable form, passing its props through.
-  // The `onSave` prop from the parent (`CustomerProfile`)
-  // is already the exact function `ProfileFormFields` expects.
   return (
     <ProfileFormFields
       initialProfile={initialProfile}

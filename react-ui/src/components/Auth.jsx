@@ -1,15 +1,19 @@
-// In react-ui/src/components/Auth.jsx
 import React, { useState } from 'react';
-// --- MODIFICATION: Import the new registerInsurer function ---
 import { login, register, registerInsurer } from '../services/api';
 
 export default function Auth({ onLogin }) {
-  // --- MODIFICATION: Use authMode instead of isRegister ---
-  const [authMode, setAuthMode] = useState('login'); // 'login', 'registerCustomer', 'registerInsurer'
+  const [authMode, setAuthMode] = useState('login');
+
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
-  const [inviteCode, setInviteCode] = useState(''); // --- ADDED: State for invite code
+  const [inviteCode, setInviteCode] = useState('');
+
+  const [name, setName] = useState('');
+  const [dob, setDob] = useState('');
+  const [gender, setGender] = useState('');
+  const [smokingStatus, setSmokingStatus] = useState('');
+
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
@@ -20,8 +24,8 @@ export default function Auth({ onLogin }) {
     
     try {
       if (authMode === 'login') {
-        const loginData = await login(username, password); // Returns { access_token, role }
-        onLogin(loginData); // Pass full data to App.jsx
+        const loginData = await login(username, password);
+        onLogin(loginData);
       } else {
         // Common registration validation
         if (password !== passwordConfirm) {
@@ -30,9 +34,11 @@ export default function Auth({ onLogin }) {
         }
 
         if (authMode === 'registerCustomer') {
-          await register(username, password, passwordConfirm);
+          const profileData = { name, dob, gender, smokingStatus };
+          await register(username, password, passwordConfirm, profileData);
+
           setMessage('Registration successful! Please log in.');
-          setAuthMode('login'); // Switch to login view
+          setAuthMode('login');
         } else if (authMode === 'registerInsurer') {
           if (!inviteCode) {
             setError('Invite code is required.');
@@ -40,7 +46,7 @@ export default function Auth({ onLogin }) {
           }
           await registerInsurer(username, password, passwordConfirm, inviteCode);
           setMessage('Insurer registration successful! Please log in.');
-          setAuthMode('login'); // Switch to login view
+          setAuthMode('login');
         }
       }
     } catch (e) {
@@ -84,7 +90,6 @@ export default function Auth({ onLogin }) {
             />
           </div>
 
-          {/* Show for both registration types */}
           {isRegistering && (
             <div className="form-group">
               <label htmlFor="passwordConfirm">Re-enter Password</label>
@@ -99,13 +104,71 @@ export default function Auth({ onLogin }) {
             </div>
           )}
 
+          {/* --- Profile Fields for Customer Registration --- */}
+          {authMode === 'registerCustomer' && (
+            <>
+              <div className="form-group">
+                <label htmlFor="name-reg">Full Name</label>
+                <input
+                  id="name-reg"
+                  type="text"
+                  className="form-input"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  placeholder="e.g., Jane Doe"
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="dob-reg">Date of Birth</label>
+                <input
+                  id="dob-reg"
+                  type="date"
+                  className="form-input"
+                  value={dob}
+                  onChange={e => setDob(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="gender-reg">Gender</label>
+                <select
+                  id="gender-reg"
+                  className="form-input"
+                  value={gender}
+                  onChange={e => setGender(e.target.value)}
+                  required
+                >
+                  <option value="">Select gender</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label htmlFor="smoking-reg">Smoking Status</label>
+                <select
+                  id="smoking-reg"
+                  className="form-input"
+                  value={smokingStatus}
+                  onChange={e => setSmokingStatus(e.target.value)}
+                  required
+                >
+                  <option value="">Select smoking status</option>
+                  <option value="non-smoker">Non-smoker</option>
+                  <option value="smoker">Smoker</option>
+                  <option value="ex-smoker">Ex-smoker</option>
+                </select>
+              </div>
+            </>
+          )}
+
           {/* Show ONLY for insurer registration */}
           {authMode === 'registerInsurer' && (
             <div className="form-group">
               <label htmlFor="inviteCode">Invite Code</label>
               <input
                 id="inviteCode"
-                type="password" // Use password type to hide the code
+                type="password"
                 value={inviteCode}
                 onChange={e => setInviteCode(e.target.value)}
                 required
@@ -123,7 +186,6 @@ export default function Auth({ onLogin }) {
           </button>
         </form>
         
-        {/* --- MODIFICATION: New auth mode toggles --- */}
         {authMode === 'login' && (
           <>
             <button

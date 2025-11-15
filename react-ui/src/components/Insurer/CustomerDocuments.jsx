@@ -1,39 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import * as api from '../../services/api';
+import { uploadPolicies, deletePolicies, downloadFile } from '../../services/api';
 import FileDropzone from '../FileDropzone';
 import FileDisplayList from '../FileDisplayList';
 
 export default function CustomerDocuments({ customerId, files, onDataChanged }) {
-  // State for the file list
-  // const [files, setFiles] = useState([]);
-  // const [listLoading, setListLoading] = useState(true);
-  // const [listError, setListError] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // State for the new upload
   const [uploadFiles, setUploadFiles] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadMessage, setUploadMessage] = useState('');
   const [uploadError, setUploadError] = useState(null);
 
-  // const fetchFiles = async () => {
-  //   setListLoading(true);
-  //   setListError(null);
-  //   try {
-  //     const res = await api.getInsurerCustomerFiles(customerId);
-  //     setFiles(res.files || []);
-  //   } catch (err) {
-  //     setListError(err.message);
-  //   } finally {
-  //     setListLoading(false);
-  //   }
-  // };
-
-  // useEffect(() => {
-  //   fetchFiles();
-  // }, [customerId]);
-
-  // --- Upload Handlers ---
   const handleFilesSelected = (selected) => {
     setUploadFiles(selected);
     setUploadMessage('');
@@ -46,10 +23,10 @@ export default function CustomerDocuments({ customerId, files, onDataChanged }) 
     setUploadError(null);
     setUploadMessage('');
     try {
-      const res = await api.uploadForCustomer(customerId, uploadFiles);
+      const res = await uploadPolicies(uploadFiles, customerId);
       setUploadMessage(res.message);
       setUploadFiles([]);
-      onDataChanged(); // <-- Refresh parent data
+      onDataChanged();
     } catch (err) {
       setUploadError(err.message);
     } finally {
@@ -57,16 +34,15 @@ export default function CustomerDocuments({ customerId, files, onDataChanged }) 
     }
   };
 
-  // --- List Handlers (passed to FileDisplayList) ---
   const handleListDelete = async (filesToDelete) => {
     if (filesToDelete.length === 0) return;
     if (!window.confirm(`Delete ${filesToDelete.length} file(s) for this customer?`)) return;
     
     setIsDeleting(true);
-    // setListError(null);
+    setUploadError(null);
     try {
-      await api.deleteForCustomer(customerId, filesToDelete);
-      onDataChanged(); // Refresh parent data
+      await deletePolicies(filesToDelete, customerId);
+      onDataChanged();
     } catch (err) {
       setUploadError(err.message);
     } finally {
@@ -75,15 +51,14 @@ export default function CustomerDocuments({ customerId, files, onDataChanged }) 
   };
 
   const handleListDownload = async (filename) => {
-    // Assuming an API function exists. If not, this can be removed.
-    // For now, it just logs to the console.
-    console.log('Download requested for:', customerId, filename);
-    setListError('Download is not implemented for customer files yet.');
-    // try {
-    //   await api.downloadForCustomer(customerId, filename);
-    // } catch (err) {
-    //   setListError(err.message);
-    // }
+    setUploadError(null);
+    setUploadMessage('');
+
+    try {
+      await downloadFile(filename, customerId);
+    } catch (err) {
+      setUploadError(err.message);
+    }
   };
 
   return (
@@ -110,12 +85,12 @@ export default function CustomerDocuments({ customerId, files, onDataChanged }) 
       </div>
 
       {/* --- FILE LIST SECTION --- */}
-      <div style={{ borderTop: '1px solid #e0e0e0', paddingTop: '16px' }}>
+      <div>
         <FileDisplayList
           title="Uploaded Files for Customer"
-          files={files} // <-- From props
-          loading={false} // Loading is handled by parent
-          error={null}    // Error is handled by parent
+          files={files}
+          loading={false}
+          error={null}
           isDeleting={isDeleting}
           emptyListMessage="No files uploaded for this customer."
           onDelete={handleListDelete}
