@@ -208,57 +208,114 @@ async def process_serp_result(
         return {"learnings": [], "follow_up_questions": []}
 
 
+# async def write_final_report(
+#     prompt: str,
+#     learnings: List[str],
+#     visited_urls: List[str]
+# ) -> str:
+#     """Write final research report"""
+    
+#     learnings_string = "\n".join([f"<learning>\n{learning}\n</learning>" for learning in learnings])
+    
+#     report_prompt = trim_prompt(f"""
+#     Using the following user prompt and research learnings, write a comprehensive final report on the topic.
+
+#     Requirements:
+#     - Structure the report into sections: Introduction, Background, Analysis, Recommendations, Conclusion.
+#     - Include all relevant insights from the research learnings, synthesizing them rather than listing.
+#     - Provide tables, comparisons, or examples where appropriate.
+#     - Highlight key takeaways and actionable points at the end of each section.
+#     - Make the report professional, easy to read, and suitable for stakeholders.
+#     - Aim for at least 3 pages (around 1500+ words).
+
+#     User Prompt:
+#     <prompt>{prompt}</prompt>
+
+#     Research Learnings:
+#     <learnings>
+#     {learnings_string}
+#     </learnings>
+#     """)
+
+
+    
+#     schema = {
+#         "type": "object",
+#         "properties": {
+#             "report_markdown": {
+#                 "type": "string",
+#                 "description": "Final report on the topic in Markdown"
+#             }
+#         },
+#         "required": ["report_markdown"]
+#     }
+    
+#     try:
+#         response = generate_object(system_prompt(), report_prompt, schema)
+#         result = parse_response(response)
+#         report = result.get("report_markdown", "")
+#         log(f"DEBUG: AI report content: {report[:500]}")  # Add this line to see what the AI returns
+#         # Append sources
+#         urls_section = f"\n\n## Sources\n\n" + "\n".join([f"- {url}" for url in visited_urls])
+#         return report + urls_section
+    
+#     except Exception as e:
+#         log(f"Error writing final report: {e}")
+#         return "Error generating report"
+
+# new way to generate final report using OpenAI only cuz its btr than nvidia model 
+from openai import OpenAI
+import os
+
+client = OpenAI(api_key=os.getenv("OPENAI_KEY"))
+
 async def write_final_report(
     prompt: str,
     learnings: List[str],
     visited_urls: List[str]
 ) -> str:
-    """Write final research report"""
-    
-    learnings_string = "\n".join([f"<learning>\n{learning}\n</learning>" for learning in learnings])
-    
-    report_prompt = trim_prompt(
-    f"""Using the following user prompt and research learnings, write a comprehensive final report on the topic. 
+    """Write final research report using OpenAI GPT model only"""
 
-        Requirements:
-        - Make the report detailed, aiming for at least 3 pages.
-        - Include all relevant insights from the research learnings.
-        - Organize the report with clear headings and subheadings.
-        - Synthesize information rather than just listing learnings.
-        - Include tables, examples, or comparisons where helpful.
-        - Ensure the report is professional, easy to read, and actionable.
+    learnings_string = "\n".join(
+        [f"<learning>\n{learning}\n</learning>" for learning in learnings]
+    )
 
-        User Prompt:
-        <prompt>{prompt}</prompt>
+    report_prompt = trim_prompt(f"""
+    Using the following user prompt and research learnings, write a comprehensive final report on the topic.
 
-        Research Learnings:
-        <learnings>
-        {learnings_string}
-        </learnings>
-        """
+    Requirements:
+    - Structure into: Introduction, Background, Analysis, Recommendations, Conclusion.
+    - Synthesize research learnings into coherent insights.
+    - Include tables or comparisons when helpful.
+    - Make it professional and suitable for stakeholders.
+    - Aim for ~1500+ words.
+
+    User Prompt:
+    <prompt>{prompt}</prompt>
+
+    Research Learnings:
+    <learnings>
+    {learnings_string}
+    </learnings>
+    """)
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",   # or gpt-4.1 for stronger writing
+            messages=[
+                {"role": "system", "content": system_prompt()},
+                {"role": "user", "content": report_prompt},
+            ]
         )
 
-    
-    schema = {
-        "type": "object",
-        "properties": {
-            "report_markdown": {
-                "type": "string",
-                "description": "Final report on the topic in Markdown"
-            }
-        },
-        "required": ["report_markdown"]
-    }
-    
-    try:
-        response = generate_object(system_prompt(), report_prompt, schema)
-        result = parse_response(response)
-        report = result.get("report_markdown", "")
-        log(f"DEBUG: AI report content: {report[:500]}")  # Add this line to see what the AI returns
-        # Append sources
-        urls_section = f"\n\n## Sources\n\n" + "\n".join([f"- {url}" for url in visited_urls])
+        report = response.choices[0].message.content
+
+        urls_section = "\n\n## Sources\n\n" + "\n".join(
+            [f"- {url}" for url in visited_urls]
+        )
+
         return report + urls_section
-    
+
     except Exception as e:
         log(f"Error writing final report: {e}")
         return "Error generating report"
@@ -388,13 +445,13 @@ async def deep_research(
                         "www.greateasternlife.com", # Great Eastern
                         "www.policypal.com",        # PolicyPal Singapore
                     ],
-                    "exclude_domains": [
-                        "www.reddit.com",
-                        "www.quora.com",
-                        "medium.com",
-                        "blogspot.com",
-                        "forums.hardwarezone.com.sg"
-                    ]
+                    # "exclude_domains": [
+                    #     "www.reddit.com",
+                    #     "www.quora.com",
+                    #     "medium.com",
+                    #     "blogspot.com",
+                    #     "forums.hardwarezone.com.sg"
+                    # ]
                 }
 
                 # Add time filter if query implies recency
