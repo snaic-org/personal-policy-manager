@@ -6,9 +6,8 @@ class HelperQuery:
     def __init__(self, max_chunks_per_query: int = 20):
         self.max_chunks_per_query = max_chunks_per_query
 
-    def _format_enhanced_query(self, query: str, rag_results: List[Dict], intent: Dict[str, bool]) -> str:
+    def _format_enhanced_query(self, query: str, profile_info: str, context_from_docs: str, intent: Dict[str, bool]) -> str:
         """Format the query for deep research with RAG context"""
-        rag_context = self._format_rag_context(rag_results)
         objectives = []
 
         if intent.get("needs_comparison"):
@@ -22,8 +21,17 @@ class HelperQuery:
 
         return f"""User Query: {query}
 
-            Current Policy Information:
-            {rag_context}
+            USER PROFILE (YOUR ULTIMATE SOURCE OF TRUTH)
+            {profile_info}
+
+            **PROFILE HIERARCHY (PRIORITY ORDER):**
+            1. EXCLUSIONS (!! markers) - OVERRIDES EVERYTHING
+            2. Owned Policies, Tiers, and Riders - What user actually has
+            3. User's Age (calculated from DOB) - Determines age-based benefits
+            4. Document chunks below - Use ONLY for citation and details
+
+            POLICY DOCUMENT CHUNKS (FOR CITATION & DETAILS ONLY)
+            {context_from_docs}
 
             Research Objectives:
             {chr(10).join(objectives)}"""

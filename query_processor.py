@@ -214,6 +214,119 @@ class QueryProcessor:
             print(f"Error during query expansion: {e}")
             # Fallback to original query + manual expansion
             return f"{query} {manual_expansion}"
+    
+    # new func to prep the context for RAG and deep research
+    def _prepare_context(
+        self, 
+        search_results: List[Dict], 
+        is_personal_batch: bool,
+        user_profile: Optional[Dict],
+        max_chunks: int = 10,
+        max_context_length: int = 12000  # Token limit
+    ) -> tuple[str, str]:
+        """
+        Prepares the context for AI with token management.
+        Returns: (profile_info, context_from_docs)
+        """
+        
+        # ===== PART 1: Build Profile Info (from old _prepare_context) =====
+        if is_personal_batch and user_profile:
+            user_name = user_profile.get("name", "User")
+            user_dob = user_profile.get("date_of_birth", "N/A")
+            insurance_policies = user_profile.get("insurance_policies", {})
+
+            profile_info = f"\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n"
+            profile_info += f"- User Name: {user_name}\n"
+            profile_info += f"- User DOB: {user_dob}\n"
+
+            if insurance_policies:
+                profile_info += f"- User's Policies:\n"
+                for filename, policy_data in insurance_policies.items():
+                    plan = policy_data.get("plan_name", "Unknown Plan")
+                    tier = policy_data.get("tier", "N/A")
+                    riders = policy_data.get("riders", [])
+                    underwriting = policy_data.get("underwriting", {})
+                    exclusions = underwriting.get("exclusions")
+
+                    profile_info += f"  - Policy: {plan} (Tier: {tier})\n"
+                    
+                    if riders:
+                        rider_names = [
+                            r.get("plan_name", r) if isinstance(r, dict) else r
+                            for r in riders
+                        ]
+                        profile_info += f"    - Riders: {', '.join(rider_names)}\n"
+                    else:
+                        profile_info += f"    - Riders: None listed\n"
+                    
+                    if exclusions:
+                        profile_info += f"    - !! IMPORTANT EXCLUSION: {exclusions} !!\n"
+        else:
+            profile_info = "\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n- No user profile provided.\n"
+        
+        # ===== PART 2: Build Document Context (enhanced with token management) =====
+        
+        # Priority keywords (from _format_rag_context)
+        priority_keywords = ["coverage", "benefit", "limit", "sum assured", "sum insured", 
+                            "premium", "claim", "deductible", "exclusion"]
+        
+        def is_priority_chunk(content: str) -> bool:
+            content_lower = content.lower()
+            return any(keyword in content_lower for keyword in priority_keywords)
+        
+        # Sort results: priority chunks first
+        priority_results = [r for r in search_results[:max_chunks] if is_priority_chunk(r.get("content", ""))]
+        other_results = [r for r in search_results[:max_chunks] if not is_priority_chunk(r.get("content", ""))]
+        sorted_results = priority_results + other_results
+        
+        context_parts = []
+        total_length = 0
+        
+        print(f"Building context from top {len(sorted_results)} chunks (priority-sorted)...")
+        
+        for i, result in enumerate(sorted_results, 1):
+            content = result.get("content", "").strip()
+            metadata = result.get("metadata", {})
+            
+            if not content:
+                continue
+            
+            filename = metadata.get("filename", "Unknown Document")
+            page = metadata.get("page_number", "N/A")
+            heading = metadata.get("page_heading", "General Information")
+            
+            # Format with citation (from _prepare_context style)
+            source_ref = f"[Source {i}: {filename}, Page {page}]"
+            chunk_text = f"{source_ref}\nPAGE HEADING: {heading}\n\n{content}"
+            
+            # Token management (from _format_rag_context)
+            if total_length + len(chunk_text) > max_context_length:
+                print(f"⚠️ Reached token limit ({max_context_length}). Stopping at {i} chunks.")
+                
+                # Try to fit a trimmed version if it's important
+                if is_priority_chunk(content):
+                    remaining_space = max_context_length - total_length
+                    if remaining_space > 500:  # Only trim if we have reasonable space
+                        trimmed_content = content[:remaining_space - 200] + "..."
+                        chunk_text = f"{source_ref}\nPAGE HEADING: {heading}\n\n{trimmed_content}"
+                        context_parts.append(chunk_text)
+                        print(f"  ✂️ Trimmed priority chunk from {filename}")
+                break
+            
+            context_parts.append(chunk_text)
+            total_length += len(chunk_text)
+            
+            # Log priority chunks
+            if is_priority_chunk(content):
+                print(f"  ⭐ Priority chunk: {filename} Page {page}")
+        
+        if not context_parts:
+            context_from_docs = "No relevant document chunks found."
+        else:
+            context_from_docs = "\n\n---\n\n".join(context_parts)
+            print(f"✅ Built context: {len(context_parts)} chunks, ~{total_length} chars")
+        
+        return profile_info, context_from_docs
 
     def process_query(
         self, query: str, batch_id: str = None, user_profile: Optional[Dict] = None
@@ -449,7 +562,7 @@ class QueryProcessor:
             return "Sorry, I encountered an error while generating the response. Please try again later or check the system logs."
 
     def process_query_stream(
-        self, query: str, batch_id: str = None, user_profile: Optional[Dict] = None
+        self, query: str, batch_id: str = None, user_profile: Optional[Dict] = None, 
     ):
         """Process a query and yield response chunks for streaming."""
         try:
@@ -472,10 +585,6 @@ class QueryProcessor:
             print(f"\nProcessing query for batch: {target_batch}")
             print(f"Query: {query}")
 
-            # Analyze intent
-            self.intent_analyzer = IntentAnalyzer()
-            intent = self.intent_analyzer.analyze(query)
-            print(intent)
 
             expanded_query = self._expand_query(query)
 
@@ -496,12 +605,25 @@ class QueryProcessor:
                 # "\n Content in unique_results:", unique_results
             )
 
+            # Analyze intent
+            self.intent_analyzer = IntentAnalyzer()
+            intent = self.intent_analyzer.analyze(query)
+            print(intent)
+
             # Determine if we need deep research
             needs_research = (
                 intent["needs_comparison"] or
                 intent["asks_about_uncovered_features"] or
                 intent["requires_external_info"] or
                 len(unique_results) == 0
+            )
+
+            # ===== NEW: Prepare context early =====
+            is_personal_batch = target_batch.startswith("user_")
+            profile_info, context_from_docs = self._prepare_context(
+                unique_results, 
+                is_personal_batch, 
+                user_profile
             )
 
             # if not unique_results and not needs_research:
@@ -520,6 +642,7 @@ class QueryProcessor:
             if needs_research:
                 start_research_time = time.time()
                 print("Starting deep research streaming response...")
+                print("Profile Info:", profile_info)
                 
                 from src.run_ui import run_ui
 
@@ -527,7 +650,7 @@ class QueryProcessor:
                 asyncio.set_event_loop(loop)
 
                 try:
-                    async_gen = run_ui(query, intent, unique_results).__aiter__()
+                    async_gen = run_ui(query, intent, profile_info, context_from_docs).__aiter__()
 
                     while True:
                         try:
