@@ -39,7 +39,7 @@ async def run_ui(
     helper = HelperQuery(max_chunks_per_query=20)
     formatted_query = helper._format_enhanced_query(query=query, profile_info=profile_info, context_from_docs=context_from_docs, intent=intent)
     combined_query = formatted_query
-    print('Formatted query: ----------------------------- \n', formatted_query)
+    # print('Formatted query: ----------------------------- \n', formatted_query)
     yield {"info": f"Formatted query: {formatted_query}"}
 
     # Step 3: Generate follow-up questions

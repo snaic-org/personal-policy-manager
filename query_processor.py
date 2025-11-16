@@ -18,6 +18,7 @@ from openai import OpenAI
 from batch_manager import BatchManager
 from utils.search import HybridSearchEngine
 from src.intent_analyzer import IntentAnalyzer
+from src.response_analyzer import ResponseAnalyzer
 
 
 class QueryProcessor:
@@ -426,7 +427,7 @@ class QueryProcessor:
         context_from_docs = "\n\n---\n\n".join(context_parts)
 
         print("DEBUG: CONTEXT BEING SENT TO OPENAI:")
-        print(context_from_docs)
+        # print(context_from_docs)
 
         # Profile Handling
         if is_personal_batch and user_profile:
@@ -611,15 +612,14 @@ class QueryProcessor:
             print(intent)
 
             # Determine if we need deep research
-            needs_research = (
-                intent["needs_comparison"] or
-                intent["asks_about_uncovered_features"] or
-                intent["requires_external_info"] or
-                len(unique_results) == 0
-            )
+            # needs_research = (
+            #     intent["needs_comparison"] or
+            #     intent["asks_about_uncovered_features"] or
+            #     intent["requires_external_info"] or
+            #     len(unique_results) == 0
+            # )
 
             # ===== NEW: Prepare context early =====
-            is_personal_batch = target_batch.startswith("user_")
             profile_info, context_from_docs = self._prepare_context(
                 unique_results, 
                 is_personal_batch, 
@@ -639,18 +639,82 @@ class QueryProcessor:
             
             # deep research with UI 
             # If intent requires deep research → SKIP normal RAG flow
-            if needs_research:
-                start_research_time = time.time()
-                print("Starting deep research streaming response...")
-                print("Profile Info:", profile_info)
+            # if needs_research:
+            #     start_research_time = time.time()
+            #     print("Starting deep research streaming response...")
+            #     print("Profile Info:", profile_info)
                 
-                from src.run_ui import run_ui
+            #     from src.run_ui import run_ui
 
+            #     loop = asyncio.new_event_loop()
+            #     asyncio.set_event_loop(loop)
+
+            #     try:
+            #         async_gen = run_ui(query, intent, profile_info, context_from_docs).__aiter__()
+
+            #         while True:
+            #             try:
+            #                 chunk = loop.run_until_complete(async_gen.__anext__())
+            #                 yield "data: " + json.dumps(chunk) + "\n\n"
+            #             except StopAsyncIteration:
+            #                 break
+
+            #     finally:
+            #         loop.close()
+                    
+            #     end_research_time = time.time()
+            #     print(f"Total deep research processing time: {end_research_time - start_research_time:.2f}s")
+                    
+            #     # Signal that the stream is finished
+            #     yield "data: " + json.dumps({"done": True}) + "\n\n"
+            #     print("Finished streaming deep research response.")
+
+            #     return  # ← CRITICAL: prevents normal RAG stream from running
+
+            # ===== NEW: ANALYZE → RETRY LOGIC =====
+            # Step 1: Try normal RAG first (stream AND collect)
+            print("🔄 Attempting normal RAG response...")
+            normal_response_chunks = []
+            stored_rag_chunks = []
+            
+            for chunk in self._generate_response_stream(query, unique_results, is_personal_batch, user_profile):
+                # yield chunk  # Stream to user immediately
+                stored_rag_chunks.append(chunk)
+                # Collect for analysis
+                try:
+                    chunk_data = json.loads(chunk.replace("data: ", "").strip())
+                    if "content" in chunk_data:
+                        normal_response_chunks.append(chunk_data["content"])
+                except:
+                    pass  # Ignore parsing errors for "done" chunks
+            
+            # Step 2: Analyze the collected response
+            full_response = "".join(normal_response_chunks)
+            self.response_analyzer = ResponseAnalyzer()
+            is_satisfactory = self.response_analyzer._analyze_response_quality(query, full_response, user_profile)
+            
+            # Step 3: If bad → trigger deep research
+            if not is_satisfactory:
+                print("⚠️ Normal RAG response insufficient. Triggering deep research...")
+                # Notify user
+                yield "data: " + json.dumps({
+                    "status": "enhancing_response",
+                    "message": "Let me search for more comprehensive information..."
+                }) + "\n\n"
+                
+                # Run deep research
+                from src.run_ui import run_ui
+                
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
 
                 try:
-                    async_gen = run_ui(query, intent, profile_info, context_from_docs).__aiter__()
+                    async_gen = run_ui(
+                        query=query,
+                        intent=intent,
+                        profile_info=profile_info,
+                        context_from_docs=context_from_docs
+                    ).__aiter__()
 
                     while True:
                         try:
@@ -658,69 +722,70 @@ class QueryProcessor:
                             yield "data: " + json.dumps(chunk) + "\n\n"
                         except StopAsyncIteration:
                             break
-
                 finally:
                     loop.close()
-                    
-                end_research_time = time.time()
-                print(f"Total deep research processing time: {end_research_time - start_research_time:.2f}s")
-                    
-                # Signal that the stream is finished
-                yield "data: " + json.dumps({"done": True}) + "\n\n"
-                print("Finished streaming deep research response.")
-
-                return  # ← CRITICAL: prevents normal RAG stream from running
-
-
-
-            # NORMAL RAG streaming
-            if unique_results:
-                for chunk in self._generate_response_stream(
-                    query, unique_results, is_personal_batch, user_profile
-                ):
+                
+                print("✅ Deep research completed.")
+            else: 
+                print("✅ Normal RAG response satisfactory. Streaming to user...")
+                 # Yield ALL stored RAG chunks
+                for chunk in stored_rag_chunks:
                     yield chunk
+
+            # ===== END NEW LOGIC =====
+
+
+
+            # # NORMAL RAG streaming
+            # if unique_results:
+            #     for chunk in self._generate_response_stream(
+            #         query, unique_results, is_personal_batch, user_profile
+            #     ):
+            #         yield chunk
 
 
             # --- START: FIX FOR ASYNC/SYNC ERROR ---
 
             # This variable will hold the final, clean response
-            final_bot_response = ""
+            # final_bot_response = ""
 
-            # This generator yields chunks *and* builds the full response
-            def stream_and_capture():
-                nonlocal final_bot_response
-                full_chunks = []
+            # # This generator yields chunks *and* builds the full response
+            # def stream_and_capture():
+            #     nonlocal final_bot_response
+            #     full_chunks = []
 
-                # Use a standard 'for' loop, not 'async for'
-                for chunk in self._generate_response_stream(
-                    query, unique_results, is_personal_batch, user_profile
-                ):
-                    yield chunk  # Pass the chunk to the user immediately
-                    try:
-                        # Try to parse the chunk to build the full response for saving
-                        chunk_data_str = chunk.replace("data: ", "").strip()
-                        if chunk_data_str:
-                            chunk_data = json.loads(chunk_data_str)
-                            if "content" in chunk_data:
-                                full_chunks.append(chunk_data["content"])
-                    except json.JSONDecodeError:
-                        # Ignore "done: True" or other non-content chunks
-                        pass
-                    except Exception as e:
-                        print(f"Error parsing chunk: {e}")
+            #     # Use a standard 'for' loop, not 'async for'
+            #     for chunk in self._generate_response_stream(
+            #         query, unique_results, is_personal_batch, user_profile
+            #     ):
+            #         yield chunk  # Pass the chunk to the user immediately
+            #         try:
+            #             # Try to parse the chunk to build the full response for saving
+            #             chunk_data_str = chunk.replace("data: ", "").strip()
+            #             if chunk_data_str:
+            #                 chunk_data = json.loads(chunk_data_str)
+            #                 if "content" in chunk_data:
+            #                     full_chunks.append(chunk_data["content"])
+            #         except json.JSONDecodeError:
+            #             # Ignore "done: True" or other non-content chunks
+            #             pass
+            #         except Exception as e:
+            #             print(f"Error parsing chunk: {e}")
 
-                # Now that streaming is done, assemble and clean the final response
-                final_bot_response = self._strip_signature("".join(full_chunks))
-                # (This 'final_bot_response' can now be used in your main app
-                # for saving to DB after the stream completes)
+            #     # Now that streaming is done, assemble and clean the final response
+            #     final_bot_response = self._strip_signature("".join(full_chunks))
+            #     # (This 'final_bot_response' can now be used in your main app
+            #     # for saving to DB after the stream completes)
 
-            # This is the generator the Flask response will use
-            response_generator = stream_and_capture()
+            # # This is the generator the Flask response will use
+            # response_generator = stream_and_capture()
 
-            # 'yield from' a synchronous generator is allowed
-            yield from response_generator
+            # # 'yield from' a synchronous generator is allowed
+            # yield from response_generator
 
             # --- END: FIX ---
+            # Signal completion
+            yield "data: " + json.dumps({"done": True}) + "\n\n"
 
             processing_time = time.time() - start_time
             print(f"Total processing time: {processing_time:.2f}s")
@@ -785,7 +850,7 @@ class QueryProcessor:
         context_from_docs = "\n\n---\n\n".join(context_parts)
 
         print("DEBUG: CONTEXT BEING SENT TO OPENAI:")
-        print(context_from_docs)
+        # print(context_from_docs)
 
         # --- FIX: Updated profile logic ---
         if is_personal_batch and user_profile:
