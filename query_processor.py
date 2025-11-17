@@ -41,6 +41,10 @@ class QueryProcessor:
         self.search_engine = None
         self.current_batch_id = None
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        # Feature flag: deep research disabled by default (enable by setting DEEP_RESEARCH_ENABLED=true)
+        self.deep_research_enabled = (
+            os.getenv("DEEP_RESEARCH_ENABLED", "false").lower() == "true"
+        )
 
     def _ensure_batch_loaded(self, batch_id: str) -> bool:
         """Ensure the specified batch is loaded in the search engine."""
@@ -88,36 +92,6 @@ class QueryProcessor:
                 unique_results.append(result)
                 seen_content.add(content)
         return unique_results
-
-    def _filter_results_by_profile(
-        self, results: List[Dict], user_profile: Optional[Dict]
-    ) -> List[Dict]:
-        """Filters search results to only include documents listed in the user profile."""
-        # Note: This function is not actually called. The logic is in _filter_and_rerank_by_profile
-        if not user_profile or "insurance_policies" not in user_profile:
-            print(
-                "Info: No 'insurance_policies' found in profile. Returning all results."
-            )
-            return results
-
-        owned_policies = set(user_profile["insurance_policies"].keys())
-        if not owned_policies:
-            print(
-                "Warning: 'insurance_policies' list is empty in profile. Returning all results."
-            )
-            return results
-
-        filtered_results = []
-        for result in results:
-            metadata = result.get("metadata", {})
-            filename = metadata.get("filename")
-            if filename and filename in owned_policies:
-                filtered_results.append(result)
-
-        print(
-            f"Filtered results to {len(filtered_results)} chunks based on {len(owned_policies)} owned policies."
-        )
-        return filtered_results
 
     def _expand_query(self, query: str) -> str:
         """
@@ -216,239 +190,6 @@ class QueryProcessor:
             # Fallback to original query + manual expansion
             return f"{query} {manual_expansion}"
 
-    def process_query(
-        self, query: str, batch_id: str = None, user_profile: Optional[Dict] = None
-    ) -> str:
-        """Process a query and return the response."""
-        try:
-            # Determine the target batch
-            target_batch = batch_id or self.batch_manager.get_default_batch()
-            if not target_batch:
-                return "Error: No batch specified and no default batch set."
-
-            # Ensure the correct batch's indexes are loaded
-            if not self._ensure_batch_loaded(target_batch):
-                return f"Error: Failed to load or switch to batch '{target_batch}'."
-
-            start_time = time.time()
-            print(f"\nProcessing query for batch: {target_batch}")
-            print(f"Query: {query}")
-
-            expanded_query = self._expand_query(query)
-
-            raw_search_results = self.search_engine.hybrid_search(
-                query=expanded_query, top_k=50  # Use the expanded query
-            )
-            print(
-                f"Retrieved {len(raw_search_results)} raw results from hybrid search."
-            )
-
-            is_personal_batch = target_batch.startswith("user_")
-
-            unique_results = self._filter_and_rerank_by_profile(
-                query, raw_search_results, user_profile
-            )
-            print(
-                f"Retained {len(unique_results)} unique relevant chunks after filtering/deduplication."
-            )
-
-            if not unique_results:
-                if is_personal_batch:
-                    return f"I couldn't find relevant information in your uploaded documents for the question: '{query}'."
-                else:
-                    return f"No relevant information found in the documents of batch '{target_batch}' for the question: '{query}'."
-
-            response = self._generate_response(
-                query, unique_results, is_personal_batch, user_profile
-            )
-
-            processing_time = time.time() - start_time
-            print(f"Total processing time: {processing_time:.2f}s")
-
-            return response
-
-        except Exception as e:
-            # Log the full error for debugging
-            import traceback
-
-            print(f"An unexpected error occurred in process_query: {e}")
-            traceback.print_exc()
-            return f"An error occurred while processing your query. Please check logs. Error: {e}"
-
-    def _generate_response(
-        self,
-        original_query: str,
-        search_results: List[Dict],
-        is_personal_batch: bool,
-        user_profile: Optional[Dict],
-    ) -> str:
-        """Generate comprehensive response using retrieved chunks and potentially user profile."""
-        if not search_results:
-            return "I couldn't find any relevant information in the documents to answer your question."
-
-        context_parts = []
-        max_chunks_for_context = 10
-        cited_filenames = set()  # keeps track of which documents we found
-
-        print(
-            f"Building context from top {min(len(search_results), max_chunks_for_context)} chunks..."
-        )
-        for i, result in enumerate(search_results[:max_chunks_for_context], 1):
-            content = result.get("content", "").strip()
-            metadata = result.get("metadata", {})
-            if content:
-                filename = metadata.get("filename", "Unknown Document")
-                page = metadata.get("page_number", "N/A")
-
-                heading = metadata.get("page_heading", "General Information")
-                source_ref = f"[Source {i}: {filename}, Page {page}]"
-                context_parts.append(
-                    f"{source_ref}\nPAGE HEADING: {heading}\n\n{content}"
-                )
-
-                cited_filenames.add(filename)
-
-        if not context_parts:
-            return "Error: Found relevant documents but failed to extract content for context."
-
-        context_from_docs = "\n\n---\n\n".join(context_parts)
-
-        print("DEBUG: CONTEXT BEING SENT TO OPENAI:")
-        print(context_from_docs)
-
-        # Profile Handling
-        if is_personal_batch and user_profile:
-            user_name = user_profile.get("name", "User")
-            user_dob = user_profile.get("date_of_birth", "N/A")
-            insurance_policies = user_profile.get("insurance_policies", {})
-
-            profile_info = f"\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n"
-            profile_info += f"- User Name: {user_name}\n"
-            profile_info += f"- User DOB: {user_dob}\n"
-
-            if insurance_policies:
-                profile_info += f"- User's Policies:\n"
-                for filename, policy_data in insurance_policies.items():
-                    plan = policy_data.get("plan_name", "Unknown Plan")
-                    tier = policy_data.get("tier", "N/A")
-                    riders = policy_data.get("riders", [])
-
-                    # --- NEW: Add Underwriting Info ---
-                    underwriting = policy_data.get("underwriting", {})
-                    exclusions = underwriting.get("exclusions")
-                    # --- END NEW ---
-
-                    # Add policy and tier info
-                    profile_info += f"  - Policy: {plan} (Tier: {tier})\n"
-
-                    # Also add rider info
-                    if riders:
-                        # Handle list of strings or list of dicts
-                        rider_names = [
-                            r.get("plan_name", r) if isinstance(r, dict) else r
-                            for r in riders
-                        ]
-                        profile_info += f"    - Riders: {', '.join(rider_names)}\n"
-                    else:
-                        profile_info += f"    - Riders: None listed\n"
-
-                    # --- NEW: Add Exclusions to prompt ---
-                    if exclusions:
-                        profile_info += (
-                            f"    - !! IMPORTANT EXCLUSION: {exclusions} !!\n"
-                        )
-                    # --- END NEW ---
-        else:
-            user_name = "User"
-            # Provide a fallback string
-            profile_info = "\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n- No user profile provided.\n"
-
-        salutation = f"Hi {user_name.split()[0] if user_name != 'User' else 'Hi'},"
-
-        prompt_instructions = f"""You are an expert financial advisor specializing in insurance policy analysis.
-        Your task is to answer the user's question with extreme precision, relevance, and personalization.
-
-        --- IMPORTANT INSURANCE CONCEPTS ---
-        1.  **Terminology Equivalence (Fixing Terminologies):**
-            * 'Rental vehicle excess' is the same as 'Collision Damage Waiver (CDW)'.
-            * 'Major Cancer' or 'Coronary Artery By-Pass Surgery' are types of 'Critical Illness'.
-            * 'GREAT SupremeHealth' is a 'Reimbursement' plan (health insurance).
-            * 'Critical Care Enhancer Rider' is a 'Lump Sum' plan (critical illness insurance).
-
-        2.  **Benefit & Claim Logic (Fixing Claim Plan Logic):**
-            * **Reimbursement Plans (Health):** Pay the *hospital* for bills. The user pays 'Deductibles' and 'Co-insurance'.
-            * **Lump Sum Plans (CI/Life):** Pay a *single cash amount* (the 'Sum Insured') to the *user* upon diagnosis.
-            * **CRITICAL LOGIC:** The cash from a **Lump Sum Plan** is unrestricted. It **CAN** be used to pay for the out-of-pocket costs (deductible, co-insurance) of a **Reimbursement Plan**. You must explain this if the user's query involves both.
-
-        {profile_info}
-        --- POLICY DOCUMENT CHUNKS (FOR REFERENCE) ---
-        {context_from_docs}
-        --- END OF DOCUMENTS ---
-
-        --- CRITICAL RESPONSE RULES (MUST BE FOLLOWED) ---
-        
-        1.  **PROFILE IS THE ULTIMATE TRUTH:** The `USER PROFILE` section is your *only* source of truth. It overrides *everything* in the `DOCUMENT CHUNKS`.
-        
-        2.  **OBEY EXCLUSIONS (NEW RULE):**
-            * The `USER PROFILE` contains `!! IMPORTANT EXCLUSION: ... !!`. This is the most important rule and takes precedence over all other facts.
-            * **If the user asks about a topic (e.g., 'cancer') and their profile has an exclusion for it (e.g., "No coverage for cancer at all"), you MUST state that they are NOT covered.**
-            * You MUST explain *why* (e.g., "Based on your policy's underwriting, you have a specific exclusion for this condition...").
-            * **DO NOT** mention the benefits from the document chunks (like the $500,000) if an exclusion applies. This would be a direct contradiction and a major error.
-
-        3.  **BE RELEVANT (Fixing Irrelevance):**
-            * **ONLY** discuss policies relevant to the query.
-            * If the query is about a medical diagnosis (like 'cancer'), **DO NOT mention the 'Singlife Travel Insurance Policy'**.
-
-        4.  **BE PERSONALIZED (Fixing Personalization):**
-            * Use the user's `User DOB` to determine their age.
-            * **DO NOT** list all possible options. If the user is 24, *only* state the deductible for "up to age 80" ($3,500) and **DO NOT** mention the "$5,250 after age 80" amount.
-
-        5.  **BE SPECIFIC (Fixing Missing Dollar Amounts):**
-            * You **MUST** extract specific dollar amounts, *unless an exclusion (Rule #2) applies*.
-            * Find the **'Sum Insured'** (e.g., $500,000) not the 'Aggregate Limit' (e.g., $2.0 million).
-
-        6.  **RESPECT THE PROFILE (Fixing Rider Confusion):**
-            * If a rider (e.g., 'GREAT TotalCare') is **NOT** listed in the `User's Policies` section, you **MUST IGNORE** its benefits (like '95% deductible coverage'), even if the search chunks show them.
-            * You **MUST** instead state the benefits of their base plan (e.g., "you are responsible for the $3,500 deductible").
-
-        7.  **CITE EVERYTHING:** You must cite *every* fact you state with its source. When obeying a profile exclusion, cite ``.
-
-        8.  **NO HALLUCINATIONS (Fixing Sign-off):**
-            * You **MUST NOT** add any conversational sign-offs (e.g., "Best regards," "Sincerely," "Hope this helps!", "feel free to ask!").
-            * End your response cleanly after the last piece of information.
-            
-        9.  **Start your response with: "{salutation}"**
-        """
-
-        # Call OpenAI API
-        try:
-            print("Sending request to OpenAI API...")
-            if not self.client:
-                raise ValueError("OpenAI client is not initialized.")
-
-            response = self.client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert financial advisor. Answer insurance questions using the provided document chunks AND the user profile. The user profile, especially underwriting exclusions, is the absolute source of truth and overrides all document chunks.",
-                    },
-                    {"role": "user", "content": prompt_instructions},
-                ],
-                max_tokens=1500,
-                temperature=0.05,
-            )
-
-            final_answer = response.choices[0].message.content.strip()
-            # Post-process to remove any copied email signatures from the model output
-            final_answer = self._strip_signature(final_answer)
-            print("Received response from OpenAI API.")
-            return final_answer
-
-        except Exception as e:
-            print(f"Error during OpenAI API call: {e}")
-            return "Sorry, I encountered an error while generating the response. Please try again later or check the system logs."
-
     def process_query_stream(
         self, query: str, batch_id: str = None, user_profile: Optional[Dict] = None
     ):
@@ -505,16 +246,18 @@ class QueryProcessor:
                 or "do not use deep research" in query_lower
             )
 
-            # Determine if we need deep research
+            # Determine if we need deep research (feature-flagged off by default)
             # IMPORTANT: Only trigger deep research if:
             # 1. No results found AND user didn't explicitly ask for own policies only
             # 2. OR query explicitly needs external comparison
-            needs_research = (
-                len(unique_results) == 0 and not user_wants_own_policies_only
-            ) or (
-                intent.get("requires_external_info", False)
-                and not user_wants_own_policies_only
-            )
+            needs_research = False
+            if self.deep_research_enabled:
+                needs_research = (
+                    len(unique_results) == 0 and not user_wants_own_policies_only
+                ) or (
+                    intent.get("requires_external_info", False)
+                    and not user_wants_own_policies_only
+                )
 
             # Debug logging
             print(f"User wants own policies only: {user_wants_own_policies_only}")

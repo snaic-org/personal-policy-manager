@@ -20,6 +20,35 @@ class SearchIndexBuilder:
     def __init__(self):
         self.embedding_generator = None
 
+    def _compose_search_text(self, chunk: str, metadata: Dict[str, Any]) -> str:
+        """
+        Create a richer search text by appending LLM-enriched fields
+        (summary, entities, likely questions) to the raw chunk. This helps
+        hybrid search latch onto semantic hints without changing the content
+        that we return in results.
+        """
+        parts: List[str] = [chunk]
+
+        llm_summary = metadata.get("llm_summary")
+        if llm_summary:
+            parts.append(str(llm_summary))
+
+        llm_key_entities = metadata.get("llm_key_entities")
+        if llm_key_entities:
+            if isinstance(llm_key_entities, list):
+                parts.append(" ".join(map(str, llm_key_entities)))
+            else:
+                parts.append(str(llm_key_entities))
+
+        llm_likely_questions = metadata.get("llm_likely_questions")
+        if llm_likely_questions:
+            if isinstance(llm_likely_questions, list):
+                parts.append(" ".join(map(str, llm_likely_questions)))
+            else:
+                parts.append(str(llm_likely_questions))
+
+        return "\n\n".join(parts)
+
     def build_faiss_index(
         self, chunks: List[str], metadata: List[Dict], output_dir: str
     ) -> bool:
@@ -31,8 +60,14 @@ class SearchIndexBuilder:
             if not self.embedding_generator:
                 self.embedding_generator = EmbeddingGenerator()
 
+            # Build enriched search texts (raw chunk + LLM fields if present)
+            search_texts = [
+                self._compose_search_text(chunk, meta)
+                for chunk, meta in zip(chunks, metadata)
+            ]
+
             print("Generating embeddings for FAISS index...")
-            embeddings = self.embedding_generator.generate_embeddings(chunks)
+            embeddings = self.embedding_generator.generate_embeddings(search_texts)
 
             if not embeddings:
                 print("Failed to generate embeddings")
@@ -55,11 +90,12 @@ class SearchIndexBuilder:
             # Save FAISS index
             faiss.write_index(index, str(Path(output_dir) / "index.faiss"))
 
-            # Save chunks and metadata
+            # Save chunks and metadata (keep raw chunks for downstream context)
             with open(Path(output_dir) / "index.pkl", "wb") as f:
                 pickle.dump(
                     {
                         "chunks": chunks,
+                        "search_texts": search_texts,
                         "embeddings": embeddings,
                         "metadata": metadata,
                     },
@@ -83,15 +119,21 @@ class SearchIndexBuilder:
         try:
             from rank_bm25 import BM25Okapi
 
+            # Build enriched search texts so BM25 benefits from LLM fields too
+            search_texts = [
+                self._compose_search_text(chunk, meta)
+                for chunk, meta in zip(chunks, metadata)
+            ]
+
             # Tokenize chunks for BM25
-            tokenized_chunks = [chunk.lower().split() for chunk in chunks]
+            tokenized_chunks = [text.lower().split() for text in search_texts]
 
             # Create BM25 index
             bm25 = BM25Okapi(tokenized_chunks)
 
-            # Save BM25 index with chunks and metadata
+            # Save BM25 index with chunks and metadata (keep raw chunks for output)
             with open(output_file, "wb") as f:
-                pickle.dump((bm25, chunks, metadata), f)
+                pickle.dump((bm25, chunks, metadata, search_texts), f)
 
             print(f"BM25 index saved to {output_file}")
             return True
@@ -110,9 +152,11 @@ class HybridSearchEngine:
     def __init__(self):
         self.faiss_index = None
         self.faiss_chunks = []
+        self.faiss_search_texts = []
         self.faiss_metadata = []
         self.bm25_index = None
         self.bm25_chunks = []
+        self.bm25_search_texts = []
         self.bm25_metadata = []
         self.embedding_generator = None
 
@@ -155,6 +199,8 @@ class HybridSearchEngine:
             with open(chunks_file, "rb") as f:
                 data = pickle.load(f)
                 self.faiss_chunks = data["chunks"]
+                # search_texts is optional for backward compatibility
+                self.faiss_search_texts = data.get("search_texts", self.faiss_chunks)
                 self.faiss_metadata = data.get("metadata", [])
 
             # Initialize embedding generator for query embeddings
@@ -176,7 +222,20 @@ class HybridSearchEngine:
                 return False
 
             with open(bm25_path, "rb") as f:
-                self.bm25_index, self.bm25_chunks, self.bm25_metadata = pickle.load(f)
+                loaded = pickle.load(f)
+                # Support both legacy tuple of len 3 and new len 4 (with search_texts)
+                if isinstance(loaded, tuple) and len(loaded) == 4:
+                    (
+                        self.bm25_index,
+                        self.bm25_chunks,
+                        self.bm25_metadata,
+                        self.bm25_search_texts,
+                    ) = loaded
+                elif isinstance(loaded, tuple) and len(loaded) == 3:
+                    self.bm25_index, self.bm25_chunks, self.bm25_metadata = loaded
+                    self.bm25_search_texts = self.bm25_chunks
+                else:
+                    raise ValueError("Unexpected BM25 index file format")
 
             print(f"BM25 index loaded: {len(self.bm25_chunks)} chunks")
             return True
