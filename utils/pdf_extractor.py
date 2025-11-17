@@ -1,213 +1,219 @@
-import fitz  # PyMuPDF
-import sys
-from pathlib import Path
-import re
+# utils/pdf_extractor.py
+
+from __future__ import annotations
+
 import os
+from pathlib import Path
+from typing import List, Dict, Any
+
+import fitz  # PyMuPDF
 from dotenv import load_dotenv
 from azure.ai.formrecognizer import DocumentAnalysisClient
 from azure.core.credentials import AzureKeyCredential
-from typing import List, Dict, Any, Tuple
 
 load_dotenv()
 
 
-def _clean_text(text: str) -> str:
-    """Simple text cleaner."""
-    text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
-    text = re.sub(r" +", " ", text)
-    return text.strip()
+def split_pdf(pdf_path: str, chunk_size: int = 2) -> List[Dict[str, Any]]:
+    """
+    Split a PDF into smaller byte chunks, each containing up to `chunk_size` pages.
 
+    Returns a list of dicts:
+        [{ "bytes": <pdf_bytes>, "first_page": int }, ...]
+    where first_page is 1-based index of the first page in this chunk in the original PDF.
+    """
+    path = Path(pdf_path)
+    doc = fitz.open(path)
+    chunks: List[Dict[str, Any]] = []
 
-def table_to_markdown(table):
-    """Convert Azure table object to markdown with better cell handling."""
-    if table.row_count == 0 or table.column_count == 0:
-        return ""
-    grid = [["" for _ in range(table.column_count)] for _ in range(table.row_count)]
-    for cell in table.cells:
-        content = cell.content.strip() if cell.content else ""
-        if cell.column_span and cell.column_span > 1:
-            for col_offset in range(cell.column_span):
-                if cell.column_index + col_offset < table.column_count:
-                    grid[cell.row_index][cell.column_index + col_offset] = (
-                        content if col_offset == 0 else ""
-                    )
-        else:
-            grid[cell.row_index][cell.column_index] = content
-    lines = []
-    lines.append("| " + " | ".join(grid[0]) + " |")
-    lines.append("| " + " | ".join(["---"] * table.column_count) + " |")
-    for row in grid[1:]:
-        lines.append("| " + " | ".join(row) + " |")
-    return "\n".join(lines)
+    total_pages = doc.page_count
+    for start in range(0, total_pages, chunk_size):
+        end = min(start + chunk_size, total_pages)
+        sub_doc = fitz.open()
+        for page_index in range(start, end):
+            sub_doc.insert_pdf(doc, from_page=page_index, to_page=page_index)
+        pdf_bytes = sub_doc.tobytes()
+        chunks.append({"bytes": pdf_bytes, "first_page": start + 1})
 
-
-def get_text_spans_from_table(table):
-    """Get all text spans that are part of a table."""
-    spans = []
-    for cell in table.cells:
-        if cell.spans:
-            for span in cell.spans:
-                spans.append((span.offset, span.offset + span.length))
-    return spans
-
-
-def is_text_in_table(text_span, table_spans):
-    """Check if a text span overlaps with any table span."""
-    text_start, text_end = text_span
-    for table_start, table_end in table_spans:
-        if not (text_end <= table_start or text_start >= table_end):
-            return True
-    return False
-
-
-def split_pdf(pdf_path, chunk_size=2):
-    """Split PDF into chunks to avoid page limits."""
-    doc = fitz.open(pdf_path)
-    total_pages = len(doc)
-    chunks = []
-    for start_page in range(0, total_pages, chunk_size):
-        end_page = min(start_page + chunk_size, total_pages)
-        new_doc = fitz.open()
-        new_doc.insert_pdf(doc, from_page=start_page, to_page=end_page - 1)
-        pdf_bytes = new_doc.tobytes()
-        chunks.append(
-            {
-                "bytes": pdf_bytes,
-                "start_page": start_page + 1,
-                "end_page": end_page,
-            }
-        )
-        new_doc.close()
-    doc.close()
     return chunks
 
 
+def table_to_markdown(table) -> str:
+    """
+    Convert an Azure DocumentTable into a GitHub-flavoured markdown table string.
+    """
+    if not getattr(table, "cells", None):
+        return ""
+
+    max_row = max(cell.row_index for cell in table.cells) + 1
+    max_col = max(cell.column_index for cell in table.cells) + 1
+
+    grid: List[List[str]] = [["" for _ in range(max_col)] for _ in range(max_row)]
+
+    for cell in table.cells:
+        text = cell.content or ""
+        grid[cell.row_index][cell.column_index] = text.replace("\n", " ").strip()
+
+    lines: List[str] = []
+
+    # Header
+    header = "|" + "|".join(col or " " for col in grid[0]) + "|"
+    lines.append(header)
+    # Separator
+    separator = "|" + "|".join("---" for _ in grid[0]) + "|"
+    lines.append(separator)
+
+    # Rows
+    for row in grid[1:]:
+        line = "|" + "|".join(col or " " for col in row) + "|"
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
 def extract_pages_with_azure(
-    file_path: str, endpoint: str, key: str
+    pdf_path: str,
+    endpoint: str,
+    key: str,
 ) -> List[Dict[str, Any]]:
     """
-    Extracts PDF content using Azure Document Intelligence.
-    This is the new "worker" function that returns structured page data.
+    Use Azure Document Intelligence (prebuilt-layout) to extract structured text from a PDF.
+
+    Returns:
+        [
+            { "page_num": int, "text": str },
+            ...
+        ]
     """
-    pdf_path = Path(file_path)
-    if not pdf_path.exists():
-        print(f"Error: File not found at '{pdf_path}'")
-        return []
+    if not endpoint or not key:
+        raise ValueError("Azure endpoint and key must be provided")
 
     client = DocumentAnalysisClient(
-        endpoint=endpoint, credential=AzureKeyCredential(key)
+        endpoint=endpoint,
+        credential=AzureKeyCredential(key),
     )
 
-    doc = fitz.open(pdf_path)
-    original_page_count = len(doc)
-    doc.close()
-    print(f"[INFO] PDF has {original_page_count} pages")
+    pdf_path = str(pdf_path)
+    chunks = split_pdf(pdf_path, chunk_size=2)
 
-    # This list will hold our final output
     page_outputs: List[Dict[str, Any]] = []
+    page_offset = 0
 
-    try:
-        # Use chunking for Free Tier (2-page limit)
-        print(f"[INFO] Splitting PDF into chunks (2 pages each) for Free tier...")
-        chunks = split_pdf(pdf_path, chunk_size=2)
-        print(f"[INFO] Created {len(chunks)} chunks")
+    for chunk_num, chunk in enumerate(chunks, start=1):
+        print(f"[INFO] Processing chunk {chunk_num}/{len(chunks)}")
 
-        page_offset = 0
+        poller = client.begin_analyze_document(
+            model_id="prebuilt-layout",
+            document=chunk["bytes"],
+        )
+        result = poller.result()
 
-        for chunk_num, chunk in enumerate(chunks, 1):
-            print(f"--- Processing Chunk {chunk_num}/{len(chunks)} ---")
-            poller = client.begin_analyze_document(
-                model_id="prebuilt-layout", document=chunk["bytes"]
+        # Build a map from local page index -> text segments
+        local_pages: Dict[int, Dict[str, Any]] = {}
+
+        # Process tables first
+        for table in getattr(result, "tables", []) or []:
+            # Determine the page for this table using its bounding region
+            page_index = 0
+            if getattr(table, "bounding_regions", None):
+                # Azure pages are 1-based
+                page_index = table.bounding_regions[0].page_number - 1
+            markdown = table_to_markdown(table)
+            if not markdown:
+                continue
+
+            page_entry = local_pages.setdefault(
+                page_index, {"tables": [], "paragraphs": []}
             )
-            result = poller.result()
+            page_entry["tables"].append(markdown)
 
-            all_table_spans = []
-            for table in result.tables:
-                all_table_spans.extend(get_text_spans_from_table(table))
+        # Process paragraphs
+        for para in getattr(result, "paragraphs", []) or []:
+            content = (para.content or "").strip()
+            if not content:
+                continue
+            page_index = 0
+            if getattr(para, "bounding_regions", None):
+                page_index = para.bounding_regions[0].page_number - 1
 
-            # Process each page *within* this chunk
-            for page_num_in_chunk in range(len(result.pages)):
-                actual_page_num = page_offset + page_num_in_chunk + 1
-                page = result.pages[page_num_in_chunk]
+            page_entry = local_pages.setdefault(
+                page_index, {"tables": [], "paragraphs": []}
+            )
+            page_entry["paragraphs"].append(content)
 
-                # 1. Get tables on this page
-                page_tables_md = []
-                tables_on_page = [
-                    table
-                    for table in result.tables
-                    if any(
-                        region.page_number == page_num_in_chunk + 1
-                        for cell in table.cells
-                        for region in cell.bounding_regions
+        # Assemble text per page for this chunk
+        for local_page_index, payload in sorted(
+            local_pages.items(), key=lambda x: x[0]
+        ):
+            global_page_num = page_offset + local_page_index + 1
+
+            tables_md = "\n\n".join(payload["tables"])
+            paragraphs = payload["paragraphs"]
+
+            # ---------- NEW: de-duplicate paragraphs that just repeat table content ----------
+            deduped_paragraphs: List[str] = []
+            if paragraphs:
+                # Normalise table text into a single lowercased string without markdown noise
+                import re as _re
+
+                tables_plain = tables_md.replace("|", " ")
+                tables_plain = _re.sub(r"\s+", " ", tables_plain).strip().lower()
+
+                for p in paragraphs:
+                    p_norm = _re.sub(r"\s+", " ", p).strip().lower()
+                    # Heuristic:
+                    # - if the paragraph is short AND fully contained in table text -> likely a repeat
+                    # - otherwise keep it
+                    if len(p_norm) <= 80 and p_norm and p_norm in tables_plain:
+                        # skip duplicated table line
+                        continue
+                    deduped_paragraphs.append(p)
+
+            # Build "other text" from deduped paragraphs only
+            other_text = "\n".join(deduped_paragraphs) if deduped_paragraphs else ""
+
+            parts: List[str] = []
+            if tables_md:
+                parts.append(tables_md)
+            if other_text:
+                if tables_md:
+                    parts.append(
+                        "\n\n**Additional text (footnotes, headers, etc.):**\n"
                     )
-                ]
-                for table in tables_on_page:
-                    page_tables_md.append(table_to_markdown(table))
+                parts.append(other_text)
 
-                # 2. Get non-table text on this page
-                page_text_content = []
-                paragraphs_on_page = [
-                    para
-                    for para in result.paragraphs
-                    if para.bounding_regions[0].page_number == page_num_in_chunk + 1
-                ]
-                non_table_paragraphs = []
-                for para in paragraphs_on_page:
-                    if para.spans:
-                        para_span = (
-                            para.spans[0].offset,
-                            para.spans[0].offset + para.spans[0].length,
-                        )
-                        if not is_text_in_table(para_span, all_table_spans):
-                            non_table_paragraphs.append(para)
-                page_text_content = [para.content for para in non_table_paragraphs]
+            full_text = "\n".join(parts).strip()
 
-                # 3. Combine tables and text into ONE string for this page
-                full_page_content = (
-                    "\n\n".join(page_tables_md)
-                    + "\n\n**Additional text (footnotes, headers, etc.):**\n"
-                    + _clean_text("\n".join(page_text_content))
-                )
+            page_outputs.append(
+                {
+                    "page_num": global_page_num,
+                    "text": full_text,
+                }
+            )
 
-                # 4. Append to our output list
-                page_outputs.append(
-                    {"page_num": actual_page_num, "text": full_page_content}
-                )
+        page_offset += len(getattr(result, "pages", []) or [])
 
-            page_offset += len(result.pages)
-
-        print(f"[INFO] Successfully extracted {len(page_outputs)} pages.")
-        return page_outputs
-
-    except Exception as e:
-        print(f"An error occurred during Azure extraction: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return []
+    # Sort outputs by page_num just in case
+    page_outputs.sort(key=lambda x: x["page_num"])
+    return page_outputs
 
 
 if __name__ == "__main__":
-    # This test block now calls the new function
+    import sys
+
     AZURE_ENDPOINT = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT")
     AZURE_KEY = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_KEY")
 
-    if not AZURE_ENDPOINT or not AZURE_KEY:
-        print("Error: Azure credentials not found in .env file")
-        sys.exit(1)
-
     if len(sys.argv) < 2:
-        print("Error: You must provide a file path as an argument.")
-        print("Example: python pdf_extractor.py /path/to/your/file.pdf")
-    else:
-        # Call the new function
-        pages_data = extract_pages_with_azure(sys.argv[1], AZURE_ENDPOINT, AZURE_KEY)
+        print("Usage: python pdf_extractor.py /path/to/file.pdf")
+        raise SystemExit(1)
 
-        if pages_data:
-            print(f"\n--- SUCCESS: Extracted {len(pages_data)} pages ---")
+    pdf_file = sys.argv[1]
+    pages = extract_pages_with_azure(pdf_file, AZURE_ENDPOINT, AZURE_KEY)
 
-            # Print page 2 as an example
-            for page in pages_data:
-                if page["page_num"] == 2:
-                    print("\n--- Example Output for Page 2 ---")
-                    print(page["text"])
+    print(f"Extracted {len(pages)} pages")
+    # Print page 2 as an example if it exists
+    for page in pages:
+        if page["page_num"] == 2:
+            print("\n--- Example Output for Page 2 ---")
+            print(page["text"])

@@ -6,6 +6,7 @@ Loads user profile for personalized responses within specific batches (e.g., 'my
 * This is the "Comprehensive" version that relies on the detailed user_profile.json
 * to provide facts and uses the document chunks only for citation.
 """
+
 import asyncio
 import json
 import os
@@ -363,7 +364,7 @@ class QueryProcessor:
             profile_info = "\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n- No user profile provided.\n"
 
         salutation = f"Hi {user_name.split()[0] if user_name != 'User' else 'Hi'},"
-        
+
         prompt_instructions = f"""You are an expert financial advisor specializing in insurance policy analysis.
         Your task is to answer the user's question with extreme precision, relevance, and personalization.
 
@@ -473,9 +474,9 @@ class QueryProcessor:
             print(f"Query: {query}")
 
             # Analyze intent
-            self.intent_analyzer = IntentAnalyzer()
-            intent = self.intent_analyzer.analyze(query)
-            print(intent)
+            intent_analyzer = IntentAnalyzer()
+            intent = intent_analyzer.analyze(query)
+            print(f"Intent analysis: {intent}")
 
             expanded_query = self._expand_query(query)
 
@@ -493,19 +494,34 @@ class QueryProcessor:
             )
             print(
                 f"Retained {len(unique_results)} unique relevant chunks after filtering/deduplication."
-                # "\n Content in unique_results:", unique_results
+            )
+
+            # CRITICAL FIX: Check if user explicitly asked to avoid deep research
+            query_lower = query.lower()
+            user_wants_own_policies_only = (
+                "only refer to" in query_lower
+                or "policies i own" in query_lower
+                or "my policies" in query_lower
+                or "do not use deep research" in query_lower
             )
 
             # Determine if we need deep research
+            # IMPORTANT: Only trigger deep research if:
+            # 1. No results found AND user didn't explicitly ask for own policies only
+            # 2. OR query explicitly needs external comparison
             needs_research = (
-                intent["needs_comparison"] or
-                intent["asks_about_uncovered_features"] or
-                intent["requires_external_info"] or
-                len(unique_results) == 0
+                len(unique_results) == 0 and not user_wants_own_policies_only
+            ) or (
+                intent.get("requires_external_info", False)
+                and not user_wants_own_policies_only
             )
 
-            # if not unique_results and not needs_research:
-            if not unique_results:
+            # Debug logging
+            print(f"User wants own policies only: {user_wants_own_policies_only}")
+            print(f"Needs research: {needs_research}")
+            print(f"Unique results count: {len(unique_results)}")
+
+            if not unique_results and not needs_research:
                 if is_personal_batch:
                     error_msg = f"I couldn't find relevant information in your uploaded documents for the question: '{query}'."
                 else:
@@ -514,13 +530,12 @@ class QueryProcessor:
                     {"content": error_msg, "done": True}
                 ) + "\n\n"
                 return
-            
-            # deep research with UI 
-            # If intent requires deep research → SKIP normal RAG flow
+
+            # Deep research routing (only if truly needed)
             if needs_research:
                 start_research_time = time.time()
                 print("Starting deep research streaming response...")
-                
+
                 from src.run_ui import run_ui
 
                 loop = asyncio.new_event_loop()
@@ -538,66 +553,44 @@ class QueryProcessor:
 
                 finally:
                     loop.close()
-                    
+
                 end_research_time = time.time()
-                print(f"Total deep research processing time: {end_research_time - start_research_time:.2f}s")
-                    
-                # Signal that the stream is finished
+                print(
+                    f"Total deep research processing time: {end_research_time - start_research_time:.2f}s"
+                )
+
                 yield "data: " + json.dumps({"done": True}) + "\n\n"
                 print("Finished streaming deep research response.")
 
                 return  # ← CRITICAL: prevents normal RAG stream from running
 
-
-
-            # NORMAL RAG streaming
+            # NORMAL RAG streaming with stream capture
             if unique_results:
-                for chunk in self._generate_response_stream(
-                    query, unique_results, is_personal_batch, user_profile
-                ):
-                    yield chunk
+                final_bot_response = ""
 
+                def stream_and_capture():
+                    nonlocal final_bot_response
+                    full_chunks = []
 
-            # --- START: FIX FOR ASYNC/SYNC ERROR ---
+                    for chunk in self._generate_response_stream(
+                        query, unique_results, is_personal_batch, user_profile
+                    ):
+                        yield chunk
+                        try:
+                            chunk_data_str = chunk.replace("data: ", "").strip()
+                            if chunk_data_str:
+                                chunk_data = json.loads(chunk_data_str)
+                                if "content" in chunk_data:
+                                    full_chunks.append(chunk_data["content"])
+                        except json.JSONDecodeError:
+                            pass
+                        except Exception as e:
+                            print(f"Error parsing chunk: {e}")
 
-            # This variable will hold the final, clean response
-            final_bot_response = ""
+                    final_bot_response = self._strip_signature("".join(full_chunks))
 
-            # This generator yields chunks *and* builds the full response
-            def stream_and_capture():
-                nonlocal final_bot_response
-                full_chunks = []
-
-                # Use a standard 'for' loop, not 'async for'
-                for chunk in self._generate_response_stream(
-                    query, unique_results, is_personal_batch, user_profile
-                ):
-                    yield chunk  # Pass the chunk to the user immediately
-                    try:
-                        # Try to parse the chunk to build the full response for saving
-                        chunk_data_str = chunk.replace("data: ", "").strip()
-                        if chunk_data_str:
-                            chunk_data = json.loads(chunk_data_str)
-                            if "content" in chunk_data:
-                                full_chunks.append(chunk_data["content"])
-                    except json.JSONDecodeError:
-                        # Ignore "done: True" or other non-content chunks
-                        pass
-                    except Exception as e:
-                        print(f"Error parsing chunk: {e}")
-
-                # Now that streaming is done, assemble and clean the final response
-                final_bot_response = self._strip_signature("".join(full_chunks))
-                # (This 'final_bot_response' can now be used in your main app
-                # for saving to DB after the stream completes)
-
-            # This is the generator the Flask response will use
-            response_generator = stream_and_capture()
-
-            # 'yield from' a synchronous generator is allowed
-            yield from response_generator
-
-            # --- END: FIX ---
+                response_generator = stream_and_capture()
+                yield from response_generator
 
             processing_time = time.time() - start_time
             print(f"Total processing time: {processing_time:.2f}s")
@@ -1014,32 +1007,23 @@ class QueryProcessor:
             return self.search_engine.get_stats()
         return {"error": "Search engine not initialized."}
 
-    def _strip_signature(self, text: str) -> str:
-        """Conservative removal of trailing email signature-like blocks from model output.
-
-        This mirrors the preprocessing removing signatures in documents; it is a
-        final safety net to avoid returning 'Best regards, [Name]' style closings.
-        """
-        import re
     def _get_research_objectives(self, intent: Dict[str, bool]) -> str:
+        """Generate research objectives based on query intent."""
         objectives = []
-        if intent["needs_comparison"]:
+        if intent.get("needs_comparison", False):
             objectives.append("- Compare with similar policies from other insurers")
-        if intent["asks_about_uncovered_features"]:
-            objectives.append("- Find alternative policies that might cover these features")
-        if intent["requires_external_info"]:
+        if intent.get("asks_about_uncovered_features", False):
+            objectives.append(
+                "- Find alternative policies that might cover these features"
+            )
+        if intent.get("requires_external_info", False):
             objectives.append("- Research general information about this topic")
-        
-        return "\n".join(objectives) if objectives else "- Provide relevant insurance information"
 
-        sig_pattern = re.compile(
-            r"(?m)(?:\n|\A)\s*(?:Best regards,|Best Regards,|Regards,|Sincerely,|Kind regards,|Kind Regards,|Yours sincerely,|Yours faithfully,|Thanks,|Thank you,|Thank you for your time,?)\s*(?:\n[^\n]{0,120})?(?:\n[^\n]{0,120})?\s*\Z",
-            flags=re.IGNORECASE,
+        return (
+            "\n".join(objectives)
+            if objectives
+            else "- Provide relevant insurance information"
         )
-
-        new_text = sig_pattern.sub("\n", text)
-        new_text = re.sub(r"(?m)^\s*\[?Your Name\]?\s*$", "\n", new_text)
-        return new_text.strip()
 
     def _filter_and_rerank_by_profile(
         self,
@@ -1242,12 +1226,6 @@ class QueryProcessor:
 
         return boosted_results
 
-    def get_performance_stats(self) -> Dict[str, Any]:
-        """Get basic statistics about the search engine state."""
-        if self.search_engine:
-            return self.search_engine.get_stats()
-        return {"error": "Search engine not initialized."}
-
     def _strip_signature(self, text: str) -> str:
         """Conservative removal of trailing email signature-like blocks from model output.
 
@@ -1257,7 +1235,7 @@ class QueryProcessor:
         import re
 
         sig_pattern = re.compile(
-            r"(?m)(?:\n|\A)\s*(?:Best regards,|Best Regards,|Regards,|Sincerely,|Kind regards,|Kind Regards,|Yours sincerely,|Yours faithfully,|Thanks,|Thank you,|Thank you for your time,?)\s*(?:\n[^\n]{0,120})?(?:\n[^\n]{0,1cm 20})?\s*\Z",
+            r"(?m)(?:\n|\A)\s*(?:Best regards,|Best Regards,|Regards,|Sincerely,|Kind regards,|Kind Regards,|Yours sincerely,|Yours faithfully,|Thanks,|Thank you,|Thank you for your time,?)\s*(?:\n[^\n]{0,120})?(?:\n[^\n]{0,120})?\s*\Z",
             flags=re.IGNORECASE,
         )
 
