@@ -30,16 +30,18 @@ class Settings:
         self.chunk_overlap = 200
 
         # Search settings
-        self.faiss_top_k = 10
-        self.bm25_top_k = 10
-        self.faiss_weight = 0.7
-        self.bm25_weight = 0.3
+        self.faiss_top_k = 15
+        self.bm25_top_k = 15
+        self.faiss_weight = 0.75
+        self.bm25_weight = 0.25
 
         # ============================================
         # RAG QUERY PROCESSOR SETTINGS
         # ============================================
         self.SEARCH_TOP_K = 60
-        self.MAX_CONTEXT_CHUNKS = 30  # Increased to 30 for multi-policy queries (10 per policy)
+        self.MAX_CONTEXT_CHUNKS = (
+            30  # Increased to 30 for multi-policy queries (10 per policy)
+        )
 
         # Model settings for query expansion
         self.EXPANSION_MODEL = "gpt-4o-mini"
@@ -48,7 +50,9 @@ class Settings:
 
         # Model settings for response generation
         self.RESPONSE_MODEL = "gpt-4o"
-        self.RESPONSE_MAX_TOKENS = 1500
+        self.RESPONSE_MAX_TOKENS = (
+            2500  # Increased to accommodate text excerpts with citations
+        )
         self.RESPONSE_TEMPERATURE = 0.05
 
         # Feature flags
@@ -255,9 +259,9 @@ STEP 7: EXPLAIN MULTI-POLICY COORDINATION (IF APPLICABLE)
     3. User CAN use lump sum to cover their out-of-pocket costs
 → Give specific dollar example using their actual benefits
 
-STEP 8: CITE EVERYTHING (CRITICAL - NO HALLUCINATED CITATIONS)
+STEP 8: CITE EVERYTHING WITH TEXT EXCERPTS (CRITICAL - NO HALLUCINATED CITATIONS)
 ───────────────────────────────────────────────────────────────────────
-- Every fact MUST have the CORRECT citation:
+- Every fact MUST have the CORRECT citation WITH a brief text excerpt showing where it came from
 
 FROM USER PROFILE (DO NOT show citation tags to user):
 ✓ User's name, DOB, age
@@ -268,11 +272,25 @@ FROM USER PROFILE (DO NOT show citation tags to user):
 - When referencing profile info, just state it naturally without any tags
 - Example: "Your GREAT SupremeHealth policy has an exclusion for cancer" (no tags needed)
 
-FROM DOCUMENT CHUNKS (cite [Source X: filename, Page Y]):
+FROM DOCUMENT CHUNKS (cite [Source X: filename, Page Y] + show excerpt):
 ✓ Dollar amounts (deductibles, sum insured, limits)
 ✓ Benefit details (what's covered, how much, percentages)
 ✓ Policy terms and conditions
 ✓ How benefits work (coordination, payment process)
+
+**IMPORTANT: Show the actual text excerpt after each citation to build trust**
+
+Format for citations with excerpts:
+- Make your statement with citation: [Source X: filename, Page Y]
+- Immediately after, show a brief excerpt (1-2 sentences) from that source in quotes
+- Use "..." to indicate if text is shortened
+
+Example of CORRECT citation with excerpt:
+✓ "The deductible for P PLUS tier is $3,500 [Source 5: GREAT_SupremeHealth_Benefits.pdf, Page 10].
+   The policy states: 'For P PLUS tier members, the annual deductible is $3,500 for treatment at private hospitals...'"
+
+Example of citation WITHOUT excerpt (AVOID THIS):
+✗ "The deductible is $3,500 [Source 5: GREAT_SupremeHealth_Benefits.pdf, Page 10]."
 
 NO CITATION NEEDED:
 ✓ General insurance concepts from PART 1
@@ -280,8 +298,8 @@ NO CITATION NEEDED:
 
  - NEVER cite <USER PROFILE> for dollar amounts or benefit details! Do NOT output the literal token "<USER PROFILE>" in the user-facing answer at all—just weave profile facts in natural language.
 - Example of CORRECT citations:
-✓ "You own the Critical Care Enhancer Rider <USER PROFILE>, which pays 
-    $500,000 upon diagnosis [Source 2: Manulife, Page 7]."
+✓ "You own the Critical Care Enhancer Rider, which pays $500,000 upon diagnosis [Source 2: Manulife, Page 7].
+    The policy states: 'Sum Insured for Critical Care Enhancer Rider: $500,000...'"
 
 - Example of WRONG citations:
 ✗ "Your CI rider pays $500,000 <USER PROFILE>" (NO! Amount is from docs, not profile)
