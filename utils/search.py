@@ -149,7 +149,14 @@ class SearchIndexBuilder:
 class HybridSearchEngine:
     """Performs hybrid search using both FAISS and BM25."""
 
-    def __init__(self):
+    def __init__(self, faiss_weight: float = 0.7, bm25_weight: float = 0.3):
+        """
+        Initialize HybridSearchEngine with configurable weights.
+
+        Args:
+            faiss_weight: Weight for FAISS (semantic) search results (default: 0.7)
+            bm25_weight: Weight for BM25 (keyword) search results (default: 0.3)
+        """
         self.faiss_index = None
         self.faiss_chunks = []
         self.faiss_search_texts = []
@@ -159,6 +166,8 @@ class HybridSearchEngine:
         self.bm25_search_texts = []
         self.bm25_metadata = []
         self.embedding_generator = None
+        self.faiss_weight = faiss_weight
+        self.bm25_weight = bm25_weight
 
     def load_indexes(self, faiss_path: str, bm25_path: str) -> bool:
         """Load FAISS and BM25 indexes."""
@@ -244,13 +253,16 @@ class HybridSearchEngine:
             print(f"Error loading BM25 index: {e}")
             return False
 
-    def hybrid_search(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
+    def hybrid_search(
+        self, query: str, top_k: int = 10, filename_filter: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         Perform hybrid search combining FAISS and BM25 results.
 
         Args:
             query: Search query string
             top_k: Number of results to return
+            filename_filter: Optional filename to filter results (e.g., "Manulife_Policy_Illustration_REDACTED.pdf")
         """
         if not self.faiss_index or not self.bm25_index:
             print("Indexes not loaded")
@@ -258,10 +270,19 @@ class HybridSearchEngine:
 
         try:
             # Get FAISS results (semantic search)
-            faiss_results = self._faiss_search(query, top_k)
+            faiss_results = self._faiss_search(
+                query, top_k * 3 if filename_filter else top_k
+            )
 
             # Get BM25 results (keyword search)
-            bm25_results = self._bm25_search(query, top_k)
+            bm25_results = self._bm25_search(
+                query, top_k * 3 if filename_filter else top_k
+            )
+
+            # Apply filename filter if specified
+            if filename_filter:
+                faiss_results = self._filter_by_filename(faiss_results, filename_filter)
+                bm25_results = self._filter_by_filename(bm25_results, filename_filter)
 
             # Combine and rank results
             combined_results = self._combine_results(faiss_results, bm25_results, top_k)
@@ -271,6 +292,18 @@ class HybridSearchEngine:
         except Exception as e:
             print(f"Error in hybrid search: {e}")
             return []
+
+    def _filter_by_filename(
+        self, results: List[Dict[str, Any]], filename: str
+    ) -> List[Dict[str, Any]]:
+        """Filter results to only include chunks from a specific filename."""
+        filtered = []
+        for result in results:
+            metadata = result.get("metadata", {})
+            result_filename = metadata.get("filename", "")
+            if result_filename == filename:
+                filtered.append(result)
+        return filtered
 
     def _faiss_search(self, query: str, top_k: int) -> List[Dict[str, Any]]:
         """Perform FAISS semantic search."""
@@ -352,9 +385,9 @@ class HybridSearchEngine:
         self, faiss_results: List[Dict], bm25_results: List[Dict], top_k: int
     ) -> List[Dict[str, Any]]:
         """Combine FAISS and BM25 results with weighted scoring."""
-        # Weight factors (can be tuned)
-        faiss_weight = 0.3
-        bm25_weight = 0.7
+        # Weight factors - use instance variables if set, otherwise defaults
+        faiss_weight = getattr(self, "faiss_weight", 0.7)
+        bm25_weight = getattr(self, "bm25_weight", 0.3)
 
         # Normalize scores
         if faiss_results:

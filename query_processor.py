@@ -3,8 +3,7 @@ Query Processor
 Handles domain-agnostic query processing using hybrid FAISS + BM25 search.
 Loads user profile for personalized responses within specific batches (e.g., 'my_policies').
 
-* This is the "Comprehensive" version that relies on the detailed user_profile.json
-* to provide facts and uses the document chunks only for citation.
+All hardcoded values moved to config.py
 """
 
 import asyncio
@@ -13,42 +12,26 @@ import os
 import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+import re
 
 from openai import OpenAI
 
 from batch_manager import BatchManager
 from utils.search import HybridSearchEngine
 from src.intent_analyzer import IntentAnalyzer
+from config.settings import settings as config
 
 
 class QueryProcessor:
-    # Static Keyword Dictionary for high-priority, known semantic gaps. Not sure if we want to keep.
-    STATIC_KEYWORD_MAP = {
-        "collision damage waiver": "rental vehicle excess",
-        "cdw": "rental vehicle excess",
-        "rental car insurance": "rental vehicle excess",
-        "accident in singapore": "medical expenses while in Singapore",
-        "motorcycle accident in singapore": "medical expenses while in Singapore",
-        "collision damage waiver": "rental vehicle excess rental car insurance",
-        "cdw": "rental vehicle excess rental car insurance",
-        "rental car insurance": "rental vehicle excess collision damage waiver",
-        "car rental excess": "rental vehicle excess",
-        "rental vehicle": "rental vehicle excess",
-    }
-
     def __init__(self, batch_manager: BatchManager):
         self.batch_manager = batch_manager
         self.search_engine = None
         self.current_batch_id = None
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        # Feature flag: deep research disabled by default (enable by setting DEEP_RESEARCH_ENABLED=true)
-        self.deep_research_enabled = (
-            os.getenv("DEEP_RESEARCH_ENABLED", "false").lower() == "true"
-        )
+        self.deep_research_enabled = config.DEEP_RESEARCH_ENABLED
 
     def _ensure_batch_loaded(self, batch_id: str) -> bool:
         """Ensure the specified batch is loaded in the search engine."""
-        # If already loaded, do nothing
         if self.current_batch_id == batch_id and self.search_engine:
             return True
 
@@ -59,8 +42,11 @@ class QueryProcessor:
 
         print(f"Loading indexes for batch '{batch_id}'...")
         try:
-            # Create a new search engine instance for the specified batch
-            self.search_engine = HybridSearchEngine()
+            # Initialize with weights from settings
+            self.search_engine = HybridSearchEngine(
+                faiss_weight=config.faiss_weight,
+                bm25_weight=config.bm25_weight
+            )
             success = self.search_engine.load_indexes(
                 faiss_path=paths["faiss_index"], bm25_path=paths["bm25_index"]
             )
@@ -71,7 +57,7 @@ class QueryProcessor:
                 return True
             else:
                 print(f"Error: Failed to load indexes for batch '{batch_id}'.")
-                self.search_engine = None  # Ensure it's None if loading failed
+                self.search_engine = None
                 self.current_batch_id = None
                 return False
 
@@ -87,55 +73,277 @@ class QueryProcessor:
         seen_content = set()
         for result in results:
             content = result.get("content", "")
-            # Check for non-empty content before adding
             if content and content not in seen_content:
                 unique_results.append(result)
                 seen_content.add(content)
         return unique_results
+
+    def _rerank_insurance_results(
+        self, query: str, results: List[Dict], max_results: int
+    ) -> List[Dict]:
+        """
+        Apply simple insurance-domain heuristics:
+        - Boost chunks that match the policy/rider likely relevant to the query.
+        - Force-include a high-signal CI chunk (sum insured) for cancer/CI intent.
+        - Force-include a high-signal health chunk (deductible/co-insurance) for hospital/treatment intent.
+        """
+        if not results:
+            return []
+
+        query_lower = query.lower()
+        wants_ci = any(
+            k in query_lower
+            for k in [
+                "cancer",
+                "ci",
+                "critical illness",
+                "major cancer",
+                "bypass",
+                "cabg",
+                "coronary artery",
+                "heart attack",
+                "stroke",
+                "angioplasty",
+            ]
+        )
+        wants_health = any(
+            k in query_lower
+            for k in [
+                "hospital",
+                "treatment",
+                "surgery",
+                "warded",
+                "deductible",
+                "co-insurance",
+            ]
+        )
+
+        boosted = []
+        currency_re = re.compile(r"(\$\s?\d|sgd|sum insured|payout|benefit)", re.I)
+        health_re = re.compile(r"(deductible|co-?insurance|out[- ]of[- ]pocket)", re.I)
+
+        forced_ci_candidate = None
+        forced_ci_score = float("-inf")
+        forced_health_candidate = None
+        forced_health_score = float("-inf")
+
+        for idx, res in enumerate(results):
+            meta = res.get("metadata", {}) or {}
+            content = (res.get("content") or "").lower()
+            plan_context = meta.get("plan_context") or []
+
+            score = res.get("score", 0) or 0
+            # Preserve some original ordering
+            score -= idx * 0.001
+
+            if wants_ci and any("critical care enhancer" in pc.lower() for pc in plan_context):
+                score += 5
+            if wants_health and any("supremehealth" in pc.lower() for pc in plan_context):
+                score += 3
+
+            if "sum insured" in content or "$" in content or "benefit" in content:
+                score += 2.5  # heavier weight to surface payout amounts
+            if "deductible" in content or "co-insurance" in content:
+                score += 1.0
+            if "major cancer" in content or "critical illness" in content:
+                score += 1.5
+
+            # Track best CI chunk with explicit amount words
+            if wants_ci and (
+                any("critical care enhancer" in pc.lower() for pc in plan_context)
+                or "critical care enhancer" in content
+            ):
+                has_amount_signal = bool(currency_re.search(content))
+                bonus = 20
+                if has_amount_signal:
+                    bonus = 50  # force top placement when amount present
+                ci_score = score + bonus
+                if ci_score > forced_ci_score:
+                    forced_ci_candidate = res
+                    forced_ci_score = ci_score
+
+            # Track best health chunk with deductible/co-insurance signals
+            if wants_health and (
+                any("supremehealth" in pc.lower() for pc in plan_context)
+                or "supremehealth" in content
+            ):
+                has_health_signal = bool(health_re.search(content))
+                bonus = 10
+                if has_health_signal:
+                    bonus = 30  # force top placement when deductible/co-insurance present
+                health_score = score + bonus
+                if health_score > forced_health_score:
+                    forced_health_candidate = res
+                    forced_health_score = health_score
+
+            boosted.append((score, res))
+
+        # Sort by boosted score descending
+        boosted.sort(key=lambda x: x[0], reverse=True)
+        reranked = [r for _, r in boosted]
+
+        # Force-include the best CI chunk if relevant and not already in top slots
+        if wants_ci and forced_ci_candidate:
+            if forced_ci_candidate not in reranked[: max_results]:
+                reranked = [forced_ci_candidate] + reranked
+
+        # Force-include the best health chunk if relevant and not already in top slots
+        if wants_health and forced_health_candidate:
+            if forced_health_candidate not in reranked[: max_results]:
+                reranked = [forced_health_candidate] + reranked
+
+        return reranked[:max_results]
+
+    def _inject_top_plan_chunks(
+        self, plan_substr: str, signals: List[str], max_hits: int = 1
+    ) -> List[Dict]:
+        """
+        Deterministically pull top chunks from loaded indexes for a given plan substring,
+        prioritizing amount-bearing signals. Use this when critical plan facts are needed
+        even if search/rerank missed them.
+        """
+        injected: List[Dict] = []
+        try:
+            chunks = getattr(self.search_engine, "bm25_chunks", []) or []
+            metadata = getattr(self.search_engine, "bm25_metadata", []) or []
+        except Exception:
+            return injected
+
+        scored = []
+        for content, meta in zip(chunks, metadata):
+            text = content or ""
+            text_lower = text.lower()
+            plan_ctx = meta.get("plan_context") or []
+            if not any(plan_substr in pc.lower() for pc in plan_ctx):
+                continue
+
+            score = 0
+            for s in signals:
+                if s in text_lower:
+                    score += 3
+            if re.search(r"\$\s?\d", text):
+                score += 6
+            if "sum insured" in text_lower:
+                score += 6
+            if "deductible" in text_lower or "co-insurance" in text_lower:
+                score += 4
+
+            if score > 0:
+                scored.append((score, content, meta))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        for score, content, meta in scored[:max_hits]:
+            injected.append(
+                {
+                    "content": content,
+                    "metadata": meta,
+                    "score": score + 1000,  # large to keep near top pre-rerank
+                    "source": "forced_plan_chunk",
+                }
+            )
+
+        return injected
+
+    def _multi_policy_search(
+        self, query: str, expanded_query: str, user_profile: Dict, chunks_per_policy: int = 10
+    ) -> List[Dict[str, Any]]:
+        """
+        Perform separate searches for each policy the user owns, then combine results.
+        This ensures balanced representation across all policies.
+
+        Args:
+            query: Original user query
+            expanded_query: Expanded query with additional keywords
+            user_profile: User profile containing insurance_policies
+            chunks_per_policy: Number of chunks to retrieve per policy (default: 10)
+
+        Returns:
+            Combined list of search results from all policies
+        """
+        insurance_policies = user_profile.get("insurance_policies", {})
+        if not insurance_policies:
+            print("No policies found in user profile, falling back to standard search")
+            return self.search_engine.hybrid_search(
+                query=expanded_query, top_k=config.SEARCH_TOP_K
+            )
+
+        all_results = []
+        policy_filenames = list(insurance_policies.keys())
+
+        # Detect if query is asking about amounts/coverage
+        query_lower = query.lower()
+        wants_amount = any(
+            kw in query_lower
+            for kw in ["how much", "amount", "sum insured", "coverage", "covered for", "$", "money", "payout"]
+        )
+
+        print(f"\n=== Multi-Policy Search ===")
+        print(f"Searching across {len(policy_filenames)} policies: {policy_filenames}")
+
+        for filename in policy_filenames:
+            print(f"\nSearching policy: {filename}")
+            policy_results = self.search_engine.hybrid_search(
+                query=expanded_query,
+                top_k=chunks_per_policy,
+                filename_filter=filename
+            )
+            print(f"  → Retrieved {len(policy_results)} chunks from {filename}")
+
+            # For amount queries on Life/CI policies, do an additional targeted search
+            if wants_amount and "Manulife" in filename:
+                print(f"  → Amount query detected - performing additional targeted search")
+                amount_query = "sum insured benefit amount payout table premium"
+                extra_results = self.search_engine.hybrid_search(
+                    query=amount_query,
+                    top_k=5,
+                    filename_filter=filename
+                )
+                print(f"  → Retrieved {len(extra_results)} additional chunks with amount focus")
+
+                # Add extra results, avoiding duplicates
+                existing_content = {r.get("content", "") for r in policy_results}
+                for extra in extra_results:
+                    if extra.get("content", "") not in existing_content:
+                        policy_results.append(extra)
+                        print(f"     + Added extra chunk from page {extra.get('metadata', {}).get('page_number', '?')}")
+
+            # Debug: Show page numbers and scores for Manulife
+            if "Manulife" in filename:
+                print(f"  → Manulife chunk details:")
+                for i, result in enumerate(policy_results[:15], 1):
+                    metadata = result.get("metadata", {})
+                    page = metadata.get("page_number", "?")
+                    score = result.get("combined_score", 0)
+                    content_preview = result.get("content", "")[:60].replace("\n", " ")
+                    has_dollar = "$" in result.get("content", "")
+                    dollar_marker = " [$]" if has_dollar else ""
+                    print(f"     #{i}: Page {page} (score: {score:.3f}){dollar_marker} - {content_preview}...")
+
+            # Tag each result with its policy for tracking
+            for result in policy_results:
+                result["source_policy"] = filename
+                all_results.append(result)
+
+        print(f"\nTotal chunks retrieved: {len(all_results)} ({chunks_per_policy} per policy)")
+        print(f"=== End Multi-Policy Search ===\n")
+
+        return all_results
 
     def _expand_query(self, query: str) -> str:
         """
         Expands the user query using intelligent LLM rewriting and a hardcoded
         critical term map for the insurance domain.
         """
-
-        # --- START: NEW V2 EXPANSION LOGIC ---
-
-        # 1. Define hardcoded maps for critical, non-obvious terms.
-        CRITICAL_TERM_MAP = {
-            "cabg": "Coronary Artery By-Pass Surgery heart surgery cardiovascular",
-            "bypass surgery": "Coronary Artery By-Pass Surgery heart",
-            "coronary": "Coronary Artery By-Pass Surgery heart cardiovascular",
-            "angioplasty": "Angioplasty and Other Invasive Treatment",
-            "stem cell": "Stem Cell Transplant",
-            "pet": "Domestic Pet Care",
-            "cat": "Domestic Pet Care",
-            "dog": "Domestic Pet Care",
-            "pet hotel": "Domestic Pet Care",
-            "dental": "Accidental Dental Treatment",
-            "motorcycle": "motorcycling",
-            "motor bike": "motorcycling",
-        }
-
-        # This map adds broad keywords based on policy type.
-        POLICY_TYPE_KEYWORDS = {
-            "health": "deductible co-insurance out-of-pocket",
-            "ci": "sum insured critical care benefit limit",
-            "critical illness": "sum insured critical care benefit limit",
-            "manuprotect": "sum insured critical care benefit limit",
-            "supremehealth": "deductible co-insurance out-of-pocket",
-        }
-
         added_keywords = set()
         query_lower = query.lower()
 
-        # Add keywords from the critical term map
-        for term, expansion in CRITICAL_TERM_MAP.items():
+        # Add keywords from the critical term map (from config)
+        for term, expansion in config.CRITICAL_TERM_MAP.items():
             if term in query_lower:
                 added_keywords.add(expansion)
 
-        # Add keywords from the policy type map
-        for term, expansion in POLICY_TYPE_KEYWORDS.items():
+        # Add keywords from the policy type map (from config)
+        for term, expansion in config.POLICY_TYPE_KEYWORDS.items():
             if term in query_lower:
                 added_keywords.update(expansion.split())
 
@@ -150,31 +358,14 @@ class QueryProcessor:
 
         manual_expansion = " ".join(added_keywords)
 
-        # --- END: NEW V2 EXPANSION LOGIC ---
-
         try:
-            expansion_prompt = f"""
-            You are an insurance domain expert. A user is asking: "{query}"
-
-            Generate a comprehensive search query that includes:
-            1. The original terms from the user's question
-            2. Official insurance terminology that means the same thing
-            3. Common abbreviations and synonyms used in insurance policies
-            4. Related concepts that might appear in policy documents
-
-            For example:
-            - "collision damage waiver" should include "rental vehicle excess", "CDW", "car rental insurance"
-            - "medical coverage" should include "medical expenses", "healthcare benefits", "treatment costs"
-
-            Focus on terms that would actually appear in insurance policy documents.
-            Output only the search terms separated by spaces (no explanations):
-            """
+            expansion_prompt = config.QUERY_EXPANSION_PROMPT.format(query=query)
 
             response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=config.EXPANSION_MODEL,
                 messages=[{"role": "user", "content": expansion_prompt}],
-                max_tokens=150,
-                temperature=0.1,
+                max_tokens=config.EXPANSION_MAX_TOKENS,
+                temperature=config.EXPANSION_TEMPERATURE,
             )
 
             llm_keywords = response.choices[0].message.content.strip()
@@ -221,23 +412,123 @@ class QueryProcessor:
 
             expanded_query = self._expand_query(query)
 
-            raw_search_results = self.search_engine.hybrid_search(
-                query=expanded_query, top_k=50
-            )
+            is_personal_batch = target_batch.startswith("user_")
+
+            # Use multi-policy search for personal batches with user profiles
+            if is_personal_batch and user_profile:
+                raw_search_results = self._multi_policy_search(
+                    query=query,
+                    expanded_query=expanded_query,
+                    user_profile=user_profile,
+                    chunks_per_policy=10  # 10 chunks per policy
+                )
+            else:
+                raw_search_results = self.search_engine.hybrid_search(
+                    query=expanded_query, top_k=config.SEARCH_TOP_K
+                )
+
             print(
                 f"Retrieved {len(raw_search_results)} raw results from hybrid search."
             )
 
-            is_personal_batch = target_batch.startswith("user_")
-
-            unique_results = self._filter_and_rerank_by_profile(
-                query, raw_search_results, user_profile
+            # Quick intent flags for targeted boosts
+            query_lower = query.lower()
+            wants_ci = any(
+                k in query_lower
+                for k in [
+                    "cancer",
+                    "ci",
+                    "critical illness",
+                    "major cancer",
+                    "bypass",
+                    "cabg",
+                    "coronary artery",
+                    "heart attack",
+                    "stroke",
+                    "angioplasty",
+                ]
             )
-            print(
-                f"Retained {len(unique_results)} unique relevant chunks after filtering/deduplication."
+            wants_health = any(
+                k in query_lower
+                for k in [
+                    "hospital",
+                    "treatment",
+                    "surgery",
+                    "warded",
+                    "deductible",
+                    "co-insurance",
+                ]
             )
 
-            # CRITICAL FIX: Check if user explicitly asked to avoid deep research
+            # Targeted second-pass search to force in key policy chunks if missing
+            def _has_plan(results, name_substr: str) -> bool:
+                for r in results:
+                    meta = r.get("metadata") or {}
+                    plan_context = meta.get("plan_context") or []
+                    content = (r.get("content") or "").lower()
+                    if any(name_substr in pc.lower() for pc in plan_context):
+                        return True
+                    if name_substr in content:
+                        return True
+                return False
+
+            if wants_ci and not _has_plan(raw_search_results, "critical care enhancer"):
+                extra_ci = self.search_engine.hybrid_search(
+                    query="Critical Care Enhancer Rider sum insured payout benefit CCE",
+                    top_k=5,
+                )
+                raw_search_results.extend(extra_ci)
+                # Heuristic forced inclusion from index if amounts still missing
+                forced_cce = self._inject_top_plan_chunks(
+                    plan_substr="critical care enhancer",
+                    signals=["sum insured", "$", "benefit", "payout", "500,000", "1,000,000"],
+                    max_hits=2,
+                )
+                raw_search_results.extend(forced_cce)
+
+            if wants_health and not _has_plan(raw_search_results, "supremehealth"):
+                extra_health = self.search_engine.hybrid_search(
+                    query="GREAT SupremeHealth P PLUS deductible co-insurance ward A",
+                    top_k=5,
+                )
+                raw_search_results.extend(extra_health)
+                forced_supreme = self._inject_top_plan_chunks(
+                    plan_substr="supremehealth",
+                    signals=["deductible", "co-insurance", "$3,500", "ward", "co payment", "co-payment"],
+                    max_hits=2,
+                )
+                raw_search_results.extend(forced_supreme)
+
+            unique_results = self._deduplicate_results(raw_search_results)
+            # Domain-aware rerank/force-includes to get higher-signal chunks
+            unique_results = self._rerank_insurance_results(
+                query, unique_results, max_results=config.MAX_CONTEXT_CHUNKS + 3
+            )
+            # Debug: write reranked chunks to a log file for inspection
+            try:
+                from pathlib import Path
+
+                debug_dir = Path("logs")
+                debug_dir.mkdir(exist_ok=True)
+                log_path = debug_dir / "reranked_chunks.txt"
+                with open(log_path, "w", encoding="utf-8") as log_file:
+                    log_file.write(f"Query: {query}\n")
+                    log_file.write(
+                        f"Total reranked: {len(unique_results)} (showing top {min(50, len(unique_results))})\n\n"
+                    )
+                    for i, r in enumerate(unique_results[: min(50, len(unique_results))], 1):
+                        meta = r.get("metadata", {}) or {}
+                        filename = meta.get("filename", "Unknown")
+                        page = meta.get("page_number", "N/A")
+                        plan_ctx = ", ".join(meta.get("plan_context") or [])
+                        snippet = (r.get("content") or "").replace("\n", " ")[:400]
+                        log_file.write(
+                            f"#{i} {filename} p{page} | plans: {plan_ctx}\n{snippet}\n\n"
+                        )
+            except Exception as debug_err:
+                print(f"[DEBUG] Failed to write reranked chunk log: {debug_err}")
+
+            # Check if user explicitly asked to avoid deep research
             query_lower = query.lower()
             user_wants_own_policies_only = (
                 "only refer to" in query_lower
@@ -247,9 +538,6 @@ class QueryProcessor:
             )
 
             # Determine if we need deep research (feature-flagged off by default)
-            # IMPORTANT: Only trigger deep research if:
-            # 1. No results found AND user didn't explicitly ask for own policies only
-            # 2. OR query explicitly needs external comparison
             needs_research = False
             if self.deep_research_enabled:
                 needs_research = (
@@ -305,35 +593,13 @@ class QueryProcessor:
                 yield "data: " + json.dumps({"done": True}) + "\n\n"
                 print("Finished streaming deep research response.")
 
-                return  # ← CRITICAL: prevents normal RAG stream from running
+                return  # CRITICAL: prevents normal RAG stream from running
 
             # NORMAL RAG streaming with stream capture
             if unique_results:
-                final_bot_response = ""
-
-                def stream_and_capture():
-                    nonlocal final_bot_response
-                    full_chunks = []
-
-                    for chunk in self._generate_response_stream(
-                        query, unique_results, is_personal_batch, user_profile
-                    ):
-                        yield chunk
-                        try:
-                            chunk_data_str = chunk.replace("data: ", "").strip()
-                            if chunk_data_str:
-                                chunk_data = json.loads(chunk_data_str)
-                                if "content" in chunk_data:
-                                    full_chunks.append(chunk_data["content"])
-                        except json.JSONDecodeError:
-                            pass
-                        except Exception as e:
-                            print(f"Error parsing chunk: {e}")
-
-                    final_bot_response = self._strip_signature("".join(full_chunks))
-
-                response_generator = stream_and_capture()
-                yield from response_generator
+                yield from self._generate_response_stream(
+                    query, unique_results, is_personal_batch, user_profile
+                )
 
             processing_time = time.time() - start_time
             print(f"Total processing time: {processing_time:.2f}s")
@@ -365,7 +631,7 @@ class QueryProcessor:
             return
 
         context_parts = []
-        max_chunks_for_context = 10
+        max_chunks_for_context = config.MAX_CONTEXT_CHUNKS
         cited_filenames = set()
 
         print(
@@ -397,10 +663,6 @@ class QueryProcessor:
 
         context_from_docs = "\n\n---\n\n".join(context_parts)
 
-        print("DEBUG: CONTEXT BEING SENT TO OPENAI:")
-        print(context_from_docs)
-
-        # --- FIX: Updated profile logic ---
         if is_personal_batch and user_profile:
             user_name = user_profile.get("name", "User")
             user_dob = user_profile.get("date_of_birth", "N/A")
@@ -416,16 +678,13 @@ class QueryProcessor:
                     plan = policy_data.get("plan_name", "Unknown Plan")
                     tier = policy_data.get("tier", "N/A")
                     riders = policy_data.get("riders", [])
-
-                    # --- NEW: Add Underwriting Info ---
                     underwriting = policy_data.get("underwriting", {})
                     exclusions = underwriting.get("exclusions")
-                    # --- END NEW ---
 
                     # Add policy and tier info
                     profile_info += f"  - Policy: {plan} (Tier: {tier})\n"
 
-                    # Also add rider info
+                    # Add rider info
                     if riders:
                         # Handle list of strings or list of dicts
                         rider_names = [
@@ -436,264 +695,24 @@ class QueryProcessor:
                     else:
                         profile_info += f"    - Riders: None listed\n"
 
-                    # --- NEW: Add Exclusions to prompt ---
+                    # Add Exclusions to prompt
                     if exclusions:
                         profile_info += (
                             f"    - !! IMPORTANT EXCLUSION: {exclusions} !!\n"
                         )
-                    # --- END NEW ---
         else:
             user_name = "User"
-            # Provide a fallback string
             profile_info = "\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n- No user profile provided.\n"
-        # --- END FIX ---
 
         salutation = f"Hi {user_name.split()[0] if user_name != 'User' else 'Hi'},"
 
-        prompt_instructions = f"""You are an expert financial advisor specializing in insurance policy analysis.
-        Your task is to answer the user's question with extreme precision, relevance, and personalization.
-
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        PART 1: MEDICAL & INSURANCE TERMINOLOGY (CRITICAL DOMAIN KNOWLEDGE)
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-        **Medical Conditions (DO NOT CONFUSE THESE):**
-        ├─ CARDIOVASCULAR: Heart Attack, Stroke, Coronary Artery By-Pass Surgery (CABG), Angioplasty
-        ├─ ONCOLOGY (CANCER): Major Cancer, Carcinoma, Leukemia, Lymphoma, Tumors
-        ├─ NEUROLOGICAL: Parkinson's, Alzheimer's, Multiple Sclerosis, Paralysis
-        ├─ RENAL: Kidney Failure, End-Stage Renal Disease (ESRD)
-        ├─ ORTHOPEDIC: Joint Replacement, Spinal Surgery, Fractures
-        └─ OTHER: Diabetes, Organ Transplant, Major Burns
-
-        **Insurance Terminology Equivalents:**
-        - "Rental vehicle excess" = "Collision Damage Waiver (CDW)" = "Car rental insurance excess"
-        - "Coronary Artery By-Pass Surgery" = "CABG" = "Heart bypass"
-        - "Critical Illness" = any of the 37 major conditions (cancer, heart attack, stroke, etc.)
-        - "Major Cancer" is ONE type of critical illness (not all critical illnesses are cancer)
-
-        **Plan Types & How They Work:**
-        ┌─────────────────────────────────────────────────────────────────────────┐
-        │ REIMBURSEMENT PLANS (Health Insurance - e.g., "GREAT SupremeHealth")   │
-        ├─────────────────────────────────────────────────────────────────────────┤
-        │ • Pays the HOSPITAL directly for medical bills                         │
-        │ • User pays OUT-OF-POCKET: Deductible + Co-insurance                   │
-        │ • Example: $100k surgery → User pays $3.5k deductible + 10% of rest    │
-        └─────────────────────────────────────────────────────────────────────────┘
-
-        ┌─────────────────────────────────────────────────────────────────────────┐
-        │ LUMP SUM PLANS (CI/Life - e.g., "Critical Care Enhancer Rider")        │
-        ├─────────────────────────────────────────────────────────────────────────┤
-        │ • Pays a FIXED CASH AMOUNT directly to the USER upon diagnosis         │
-        │ • User can spend this money on ANYTHING (no restrictions)              │
-        │ • Example: Diagnosed with heart attack → Get $500k cash immediately    │
-        └─────────────────────────────────────────────────────────────────────────┘
-
-        **CRITICAL COORDINATION LOGIC:**
-        → Lump sum cash CAN be used to pay the deductible/co-insurance of a reimbursement plan.
-        → Example: Surgery costs $100k. Health plan pays $86.5k to hospital. User owes $13.5k 
-        (deductible + co-insurance). User uses CI payout ($500k) to pay that $13.5k.
-
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        PART 2: USER PROFILE (YOUR ULTIMATE SOURCE OF TRUTH)
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-        {profile_info}
-
-        **PROFILE HIERARCHY (PRIORITY ORDER):**
-        1. EXCLUSIONS (!! markers) - OVERRIDES EVERYTHING
-        2. Owned Policies, Tiers, and Riders - What user actually has
-        3. User's Age (calculated from DOB) - Determines age-based benefits
-        4. Document chunks below - Use ONLY for citation and details
-
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        PART 3: POLICY DOCUMENT CHUNKS (FOR CITATION & DETAILS ONLY)
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-        {context_from_docs}
-
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        PART 4: RESPONSE RULES (FOLLOW EXACTLY IN THIS ORDER)
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-        STEP 1: IDENTIFY WHAT THE USER IS ASKING ABOUT
-        ─────────────────────────────────────────────────────────────────────────
-        - Read the query carefully. What medical condition or situation is mentioned?
-        - Extract the SPECIFIC condition (e.g., "Coronary Artery By-Pass Surgery" = cardiovascular)
-        - Map it to the correct category from PART 1 (cardiovascular ≠ cancer ≠ renal, etc.)
-
-        STEP 2: CHECK FOR EXCLUSIONS (HIGHEST PRIORITY)
-        ─────────────────────────────────────────────────────────────────────────
-        - Look at USER PROFILE for any `!! IMPORTANT EXCLUSION: ... !!` markers
-        - Ask: Does the exclusion SPECIFICALLY apply to the condition the user asked about?
-        
-        ✓ CORRECT APPLICATION:
-            - Query: "I need cancer treatment"
-            - Exclusion: "No coverage for cancer at all"
-            - Result: NOT COVERED (cite <USER PROFILE>)
-        
-        ✗ WRONG APPLICATION:
-            - Query: "I need heart surgery" 
-            - Exclusion: "No coverage for cancer at all"
-            - Result: COVERED (cancer exclusion doesn't apply to heart conditions!)
-
-        - IF EXCLUSION APPLIES:
-        → State clearly: "You are NOT covered for [condition]."
-        → Explain why: "Your policy has a specific exclusion: [exclusion text]"
-        → Cite: <USER PROFILE>
-        → DO NOT mention any benefits from document chunks (contradicts the exclusion)
-        → STOP HERE. Do not continue to other rules.
-
-        - IF NO EXCLUSION APPLIES:
-        → Proceed to STEP 3
-
-        STEP 3: FILTER BY RELEVANCE (POLICY SELECTION)
-        ─────────────────────────────────────────────────────────────────────────
-        - Based on the query topic, determine which policies are relevant:
-        - Medical/Surgery/Hospital → Health insurance (GREAT SupremeHealth)
-        - Critical Illness diagnosis → CI riders (Critical Care Enhancer)
-        - Death → Life insurance (ManuProtect Term base plan)
-        - Travel incidents → Travel insurance (Singlife)
-
-        - IGNORE irrelevant policies completely:
-        - Query about heart surgery → DO NOT mention travel insurance
-        - Query about flight delay → DO NOT mention health insurance
-
-        STEP 4: APPLY PERSONALIZATION (AGE & TIER-BASED BENEFITS)
-        ─────────────────────────────────────────────────────────────────────────
-        - Calculate user's age from DOB in USER PROFILE
-        - Use age to select the CORRECT benefit tier from document chunks:
-        - Age 24 → Use "up to age 80" deductible ($3,500)
-        - DO NOT list "after age 80" amounts ($5,250) - not relevant yet!
-
-        - Match user's TIER from USER PROFILE to document chunk options:
-        - User has "P PLUS" → Only state P PLUS benefits
-        - DO NOT list A PLUS or B PLUS benefits
-
-        STEP 5: RESPECT RIDER OWNERSHIP (CRITICAL FILTER)
-        ─────────────────────────────────────────────────────────────────────────
-        - Check USER PROFILE for user's actual riders
-        - Document chunks may show benefits for riders the user DOES NOT OWN
-        - Example:
-        - Document chunk mentions: "GREAT TotalCare covers 95% of deductible"
-        - USER PROFILE shows: User owns ZERO riders for GREAT SupremeHealth
-        - CORRECT RESPONSE: "You are responsible for the full $3,500 deductible"
-        - WRONG RESPONSE: Mentioning the 95% coverage (user doesn't have that rider!)
-
-        STEP 6: EXTRACT SPECIFIC DOLLAR AMOUNTS
-        ─────────────────────────────────────────────────────────────────────────
-        - Find the EXACT dollar amount for the user's situation:
-        - Deductible: "$3,500" (not "a deductible")
-        - Sum Insured: "$500,000" (not "a lump sum")
-        - Co-insurance: "10%" (not "a percentage")
-
-        - Distinguish between:
-        - Personal benefit limit: "$500,000 sum insured" ✓
-        - Plan aggregate limit: "$2M annual limit" ✗ (this is not their personal payout)
-
-        STEP 7: EXPLAIN MULTI-POLICY COORDINATION (IF APPLICABLE)
-        ─────────────────────────────────────────────────────────────────────────
-        - If query involves BOTH health insurance AND CI/life insurance:
-        → Explain the coordination from PART 1:
-            1. Health plan pays hospital (user pays deductible + co-insurance)
-            2. CI/Life plan pays lump sum cash to user
-            3. User CAN use lump sum to cover their out-of-pocket costs
-        → Give specific dollar example using their actual benefits
-
-        STEP 8: CITE EVERYTHING (CRITICAL - NO HALLUCINATED CITATIONS)
-        ─────────────────────────────────────────────────────────────────────────
-        - Every fact MUST have the CORRECT citation:
-        
-        FROM USER PROFILE (cite <USER PROFILE>):
-        ✓ User's name, DOB, age
-        ✓ Which policies the user OWNS
-        ✓ Which tier/plan the user has (e.g., "P PLUS")
-        ✓ Which riders the user OWNS (e.g., "Critical Care Enhancer Rider")
-        ✓ Exclusions (!! markers)
-        
-        FROM DOCUMENT CHUNKS (cite [Source X: filename, Page Y]):
-        ✓ Dollar amounts (deductibles, sum insured, limits)
-        ✓ Benefit details (what's covered, how much, percentages)
-        ✓ Policy terms and conditions
-        ✓ How benefits work (coordination, payment process)
-        
-        NO CITATION NEEDED:
-        ✓ General insurance concepts from PART 1
-        ✓ Your logical reasoning or math calculations
-
-        - NEVER cite <USER PROFILE> for dollar amounts or benefit details!
-        - Example of CORRECT citations:
-        ✓ "You own the Critical Care Enhancer Rider <USER PROFILE>, which pays 
-            $500,000 upon diagnosis [Source 2: Manulife, Page 7]."
-        
-        - Example of WRONG citations:
-        ✗ "Your CI rider pays $500,000 <USER PROFILE>" (NO! Amount is from docs, not profile)
-
-        STEP 9: FORMAT & CLOSE
-        ─────────────────────────────────────────────────────────────────────────
-        - Start with: "{salutation}"
-        - Use clear structure:
-        - Opening: Direct answer to the question
-        - Body: Detailed breakdown with dollar amounts and citations
-        - Closing: Summary or "next steps" (if appropriate)
-        - DO NOT add conversational fluff:
-        ✗ "Hope this helps!"
-        ✗ "Feel free to ask more questions!"
-        ✗ "Best regards,"
-        ✗ "Let me know if you need clarification!"
-        - End cleanly after the last factual statement.
-
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        PART 5: COMMON MISTAKES (WHAT NOT TO DO)
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-        ❌ MISTAKE 1: Confusing medical conditions
-        - Treating heart surgery as cancer because "cancer exclusion" exists
-        - FIX: Use PART 1 to correctly categorize the condition
-
-        ❌ MISTAKE 2: Applying exclusions to wrong conditions  
-        - "No cancer coverage" applied to kidney dialysis query
-        - FIX: Check if exclusion SPECIFICALLY matches the query topic
-
-        ❌ MISTAKE 3: Mentioning irrelevant policies
-        - Discussing travel insurance for a surgery question
-        - FIX: Use STEP 3 to filter policies by relevance
-
-        ❌ MISTAKE 4: Listing all age tiers when user is young
-        - Showing "$5,250 after age 80" to a 24-year-old
-        - FIX: Use STEP 4 to show ONLY the user's current age bracket
-
-        ❌ MISTAKE 5: Citing benefits from riders user doesn't own
-        - "You get 95% deductible coverage" when user has no rider
-        - FIX: Use STEP 5 to verify rider ownership in USER PROFILE
-
-        ❌ MISTAKE 6: Vague dollar amounts
-        - "Your deductible" instead of "Your $3,500 deductible"
-        - FIX: Use STEP 6 to extract exact numbers
-
-        ❌ MISTAKE 7: Confusing coordination of benefits
-        - "CI plan pays the hospital" (wrong - it pays the user)
-        - FIX: Use the logic from PART 1 and STEP 7
-
-        ❌ MISTAKE 8: Missing citations
-        - Stating facts without [Source X] or <USER PROFILE>
-        - FIX: Use STEP 8 to cite every fact
-
-        ❌ MISTAKE 9: Conversational sign-offs
-        - Adding "Hope this helps!" or "Best regards"
-        - FIX: Use STEP 9 - end cleanly after last fact
-
-        ❌ MISTAKE 10: Citing <USER PROFILE> for document facts
-        - "You get $500,000 <USER PROFILE>" (amount is in docs, not profile)
-        - FIX: Profile = ownership/exclusions. Docs = amounts/details.
-
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        NOW ANSWER THE USER'S QUESTION
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-        USER QUERY: {original_query}
-
-        Follow PART 4 (STEP 1 → STEP 9) exactly. Begin your response now:
-        """
+        # Use the system prompt from config with formatting
+        prompt_instructions = config.INSURANCE_SYSTEM_PROMPT.format(
+            profile_info=profile_info,
+            context_from_docs=context_from_docs,
+            salutation=salutation,
+            original_query=original_query,
+        )
 
         # Call OpenAI API with streaming
         try:
@@ -702,35 +721,25 @@ class QueryProcessor:
                 raise ValueError("OpenAI client is not initialized.")
 
             stream = self.client.chat.completions.create(
-                model="gpt-4o",
+                model=config.RESPONSE_MODEL,
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an expert financial advisor. Answer insurance questions using the provided document chunks AND the user profile. The user profile, especially underwriting exclusions, is the absolute source of truth and overrides all document chunks.",
+                        "content": "You are an expert financial advisor. Answer insurance questions using the provided document chunks AND the user profile. The user profile, especially underwriting exclusions, is the absolute source of truth and overrides all document chunks. Exclusions are policy-scoped (a health plan exclusion cannot cancel CI/Life benefits) — evaluate each relevant policy independently. State exact amounts from documents; if an amount is not found, use EXACTLY: 'Amount not found in provided documents.' Never say 'depends' or 'the exact amount is not specified.' Do NOT output the literal token '<USER PROFILE>'. No decorative arrows or emoji. End cleanly after the last factual statement—do not add offers to help or follow-up questions.",
                     },
                     {"role": "user", "content": prompt_instructions},
                 ],
-                max_tokens=1500,
-                temperature=0.05,
-                stream=True,  # Enable streaming
+                max_tokens=config.RESPONSE_MAX_TOKENS,
+                temperature=config.RESPONSE_TEMPERATURE,
+                stream=True,
             )
 
             print("Streaming response from OpenAI API...")
 
-            full_response_chunks = []
             for chunk in stream:
                 if chunk.choices[0].delta.content is not None:
                     content = chunk.choices[0].delta.content
-                    full_response_chunks.append(content)
                     yield "data: " + json.dumps({"content": content}) + "\n\n"
-
-            # Post-stream cleanup check (for logging)
-            final_response_text = "".join(full_response_chunks)
-            cleaned_final_response = self._strip_signature(final_response_text)
-            if final_response_text != cleaned_final_response:
-                print(
-                    "WARNING: Caught and stripped a hallucinated signature from the stream."
-                )
 
             # Send final done message
             yield "data: " + json.dumps({"done": True}) + "\n\n"
@@ -749,239 +758,3 @@ class QueryProcessor:
         if self.search_engine:
             return self.search_engine.get_stats()
         return {"error": "Search engine not initialized."}
-
-    def _get_research_objectives(self, intent: Dict[str, bool]) -> str:
-        """Generate research objectives based on query intent."""
-        objectives = []
-        if intent.get("needs_comparison", False):
-            objectives.append("- Compare with similar policies from other insurers")
-        if intent.get("asks_about_uncovered_features", False):
-            objectives.append(
-                "- Find alternative policies that might cover these features"
-            )
-        if intent.get("requires_external_info", False):
-            objectives.append("- Research general information about this topic")
-
-        return (
-            "\n".join(objectives)
-            if objectives
-            else "- Provide relevant insurance information"
-        )
-
-    def _filter_and_rerank_by_profile(
-        self,
-        query: str,
-        results: List[Dict],
-        user_profile: Optional[Dict],
-    ) -> List[Dict]:
-        """
-        Re-ranks search results based on the user's profile AND query keywords.
-        Uses a scoring system to apply a "boost" to each chunk's original score.
-        This is the STICT V5 logic to handle conflicting chunks.
-        """
-        if not user_profile:
-            print("No user profile provided, returning unique results only.")
-            return self._deduplicate_results(results)  # Fallback
-
-        insurance_policies = user_profile.get("insurance_policies", {})
-        if not insurance_policies:
-            print("User profile has no policies, returning unique results.")
-            return self._deduplicate_results(results)  # Fallback
-
-        print(
-            "User profile with insurance policies found. Applying smart re-ranking..."
-        )
-
-        query_lower = query.lower()
-
-        # --- 1. Calculate File Scores ---
-        # We MUST add "deductible" and "sum insured" to the keywords
-        # to help find the missing chunks.
-        keyword_to_file_map = {
-            # Manulife (CI) - High score for explicit keywords
-            "ci": ("manulife", 20),
-            "critical illness": ("manulife", 20),
-            "critical care": ("manulife", 20),
-            "manuprotect": ("manulife", 20),
-            "manulife": ("manulife", 20),
-            "sum insured": ("manulife", 30),  # <-- BOOST for $500k chunk
-            # GREAT SupremeHealth (Health) - Normal score
-            "deductible": ("supremehealth", 30),  # <-- BOOST for $3.5k chunk
-            "health plan": ("supremehealth", 10),
-            "health insurance": ("supremehealth", 10),
-            "great supremehealth": ("supremehealth", 10),
-            "p plus": ("supremehealth", 10),
-            "hospital": ("supremehealth", 3),
-            "ward": ("supremehealth", 3),
-            "surgery": ("supremehealth", 3),
-            # Singlife (Travel) - Normal score
-            "travel": ("singlife", 10),
-            "trip": ("singlife", 10),
-            "singlife": ("singlife", 10),
-            "prestige": ("singlife", 10),
-        }
-
-        if not self.search_engine or not self.search_engine.faiss_metadata:
-            print("Search engine metadata not loaded. Cannot re-rank.")
-            return self._deduplicate_results(results)
-
-        owned_filenames = set(
-            m["filename"]
-            for m in self.search_engine.faiss_metadata
-            if m.get("filename")
-        )
-
-        file_scores = {}
-        file_key_to_filename = {}
-
-        for fname in owned_filenames:
-            fname_lower = fname.lower()
-            file_scores[fname] = 0  # Initialize score for all files
-
-            if "manulife" in fname_lower:
-                file_key_to_filename["manulife"] = fname
-            elif "great_supremehealth" in fname_lower:
-                file_key_to_filename["supremehealth"] = fname
-            elif "singlife" in fname_lower:
-                file_key_to_filename["singlife"] = fname
-
-        # Score the query against the keywords
-        for keyword, (file_key, score) in keyword_to_file_map.items():
-            if keyword in query_lower:
-                mapped_filename = file_key_to_filename.get(file_key)
-                if mapped_filename in file_scores:
-                    file_scores[mapped_filename] += score
-                    print(
-                        f"  + Query keyword '{keyword}' added {score} points to {mapped_filename}"
-                    )
-
-        # --- 2. Normalize Scores and Apply Boost ---
-        max_score = (
-            max(file_scores.values())
-            if file_scores and any(s > 0 for s in file_scores.values())
-            else 1.0
-        )
-
-        normalized_file_scores = {
-            fname: score / max_score for fname, score in file_scores.items()
-        }
-
-        boosted_results = []
-        seen_content = set()
-
-        # We increase the weight of our boost to make it more impactful
-        PROFILE_BOOST_WEIGHT = 0.5
-
-        for result in results:
-            content = result.get("content", "")
-            if not content or content in seen_content:
-                continue
-            seen_content.add(content)
-
-            metadata = result.get("metadata", {})
-            chunk_filename = metadata.get("filename")
-
-            # Start with the file-level boost
-            profile_boost = normalized_file_scores.get(chunk_filename, 0.0)
-
-            # --- START: NEW, STRICTER V5 LOGIC ---
-            if chunk_filename in insurance_policies:
-                policy_data = insurance_policies[chunk_filename]
-                user_tier = policy_data.get("tier", "N/A")  # e.g., "P PLUS"
-                user_riders = policy_data.get(
-                    "riders", []
-                )  # e.g., ["Critical Care..."]
-
-                chunk_plans = metadata.get(
-                    "plan_context", []
-                )  # e.g., ["GREAT TotalCare", "P PLUS"]
-                content_lower = content.lower()
-                page_heading = metadata.get("page_heading", "").lower()
-
-                # --- 1. ENEMY RIDER PENALTY ---
-                # This is the most important rule.
-                # The user does NOT own "GREAT TotalCare".
-                if (
-                    "GREAT TotalCare" in chunk_plans
-                    or "great totalcare" in page_heading
-                ):
-                    # This chunk mentions the enemy rider. Penalize it.
-                    profile_boost -= 3.0  # Very strong penalty
-                    print(
-                        f"  --- PENALTY (Enemy Rider): Chunk from {chunk_filename} (Page {metadata.get('page_number')}) mentions 'GREAT TotalCare'."
-                    )
-
-                # --- 2. CRITICAL KEYWORD BOOST ---
-                # These boosts will find the *exact* chunks we need.
-
-                # Find the $500,000 chunk
-                if (
-                    "manulife" in chunk_filename.lower()
-                    and "500,000" in content
-                    and "critical care" in content_lower
-                ):
-                    profile_boost += 3.0  # MASSIVE boost
-                    print(
-                        f"  +++ SUPER BOOST: Found '$500,000' + 'Critical Care' in {chunk_filename} (Page {metadata.get('page_number')})"
-                    )
-
-                # Find the $3,500 chunk
-                if (
-                    "great_supremehealth" in chunk_filename.lower()
-                    and "3,500" in content
-                    and "deductible" in content_lower
-                    and user_tier in chunk_plans
-                ):
-                    profile_boost += 3.0  # MASSIVE boost
-                    print(
-                        f"  +++ SUPER BOOST: Found '$3,500' + 'Deductible' + 'P PLUS' in {chunk_filename} (Page {metadata.get('page_number')})"
-                    )
-
-                # --- 3. BASIC TIER MATCH BOOST ---
-                elif user_tier in chunk_plans:
-                    # This is a fallback boost if the chunk is relevant but not critical
-                    profile_boost += 0.2
-                    print(
-                        f"  + BOOST (Match): Chunk from {chunk_filename} (Page {metadata.get('page_number')}) matches user tier {user_tier}."
-                    )
-
-            # --- END: NEW, STRICTER V5 LOGIC ---
-
-            original_score = result.get("combined_score", 0.0)
-            result["boosted_score"] = original_score + (
-                profile_boost * PROFILE_BOOST_WEIGHT
-            )
-            boosted_results.append(result)
-
-        # 3. Sort by the new 'boosted_score'
-        boosted_results.sort(key=lambda x: x["boosted_score"], reverse=True)
-
-        print(f"Re-ranked {len(boosted_results)} unique chunks with profile boosting.")
-
-        # Print the new Top 10 for debugging
-        print("\n--- NEW TOP 10 CHUNKS ---")
-        for i, result in enumerate(boosted_results[:10]):
-            meta = result["metadata"]
-            print(
-                f"#{i+1} (Score: {result['boosted_score']:.2f}) - {meta.get('filename')} Page {meta.get('page_number')} - Heading: {meta.get('page_heading')}"
-            )
-        print("-------------------------\n")
-
-        return boosted_results
-
-    def _strip_signature(self, text: str) -> str:
-        """Conservative removal of trailing email signature-like blocks from model output.
-
-        This mirrors the preprocessing removing signatures in documents; it is a
-        final safety net to avoid returning 'Best regards, [Name]' style closings.
-        """
-        import re
-
-        sig_pattern = re.compile(
-            r"(?m)(?:\n|\A)\s*(?:Best regards,|Best Regards,|Regards,|Sincerely,|Kind regards,|Kind Regards,|Yours sincerely,|Yours faithfully,|Thanks,|Thank you,|Thank you for your time,?)\s*(?:\n[^\n]{0,120})?(?:\n[^\n]{0,120})?\s*\Z",
-            flags=re.IGNORECASE,
-        )
-
-        new_text = sig_pattern.sub("\n", text)
-        new_text = re.sub(r"(?m)^\s*\[?Your Name\]?\s*$", "\n", new_text)
-        return new_text.strip()
