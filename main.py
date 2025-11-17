@@ -429,6 +429,8 @@ def _query_stream_logic(user: User, data: dict[str, any]):
     q = data.get("query")
     if not q:
         return jsonify({"error": "Missing 'query' in request body"}), 400
+    
+    target_user_id = user.id
 
     # Save the user's question
     user_message = Message(user_id=user.id, role="user", content=q)
@@ -437,7 +439,7 @@ def _query_stream_logic(user: User, data: dict[str, any]):
 
     if not batch_manager.get_batch_info(batch_id):
         response_text = "I can't answer that yet. Please upload your policy documents first."
-        bot_message = Message(user_id=user.id, role="bot", content=response_text)
+        bot_message = Message(user_id=target_user_id, role="bot", content=response_text)
         db.session.add(bot_message)
         db.session.commit()
         def error_stream():
@@ -463,7 +465,7 @@ def _query_stream_logic(user: User, data: dict[str, any]):
             
             complete_response = "".join(full_response)
             if complete_response:
-                bot_message = Message(user_id=user.id, role="bot", content=complete_response)
+                bot_message = Message(user_id=target_user_id, role="bot", content=complete_response)
                 db.session.add(bot_message)
                 db.session.commit()
         except Exception as e:
