@@ -19,6 +19,7 @@ from openai import OpenAI
 from batch_manager import BatchManager
 from utils.search import HybridSearchEngine
 from src.intent_analyzer import IntentAnalyzer
+from src.response_analyzer import ResponseAnalyzer
 from config.settings import settings as config
 
 
@@ -44,8 +45,7 @@ class QueryProcessor:
         try:
             # Initialize with weights from settings
             self.search_engine = HybridSearchEngine(
-                faiss_weight=config.faiss_weight,
-                bm25_weight=config.bm25_weight
+                faiss_weight=config.faiss_weight, bm25_weight=config.bm25_weight
             )
             success = self.search_engine.load_indexes(
                 faiss_path=paths["faiss_index"], bm25_path=paths["bm25_index"]
@@ -136,9 +136,13 @@ class QueryProcessor:
             # Preserve some original ordering
             score -= idx * 0.001
 
-            if wants_ci and any("critical care enhancer" in pc.lower() for pc in plan_context):
+            if wants_ci and any(
+                "critical care enhancer" in pc.lower() for pc in plan_context
+            ):
                 score += 5
-            if wants_health and any("supremehealth" in pc.lower() for pc in plan_context):
+            if wants_health and any(
+                "supremehealth" in pc.lower() for pc in plan_context
+            ):
                 score += 3
 
             if "sum insured" in content or "$" in content or "benefit" in content:
@@ -170,7 +174,9 @@ class QueryProcessor:
                 has_health_signal = bool(health_re.search(content))
                 bonus = 10
                 if has_health_signal:
-                    bonus = 30  # force top placement when deductible/co-insurance present
+                    bonus = (
+                        30  # force top placement when deductible/co-insurance present
+                    )
                 health_score = score + bonus
                 if health_score > forced_health_score:
                     forced_health_candidate = res
@@ -184,12 +190,12 @@ class QueryProcessor:
 
         # Force-include the best CI chunk if relevant and not already in top slots
         if wants_ci and forced_ci_candidate:
-            if forced_ci_candidate not in reranked[: max_results]:
+            if forced_ci_candidate not in reranked[:max_results]:
                 reranked = [forced_ci_candidate] + reranked
 
         # Force-include the best health chunk if relevant and not already in top slots
         if wants_health and forced_health_candidate:
-            if forced_health_candidate not in reranked[: max_results]:
+            if forced_health_candidate not in reranked[:max_results]:
                 reranked = [forced_health_candidate] + reranked
 
         return reranked[:max_results]
@@ -245,7 +251,11 @@ class QueryProcessor:
         return injected
 
     def _multi_policy_search(
-        self, query: str, expanded_query: str, user_profile: Dict, chunks_per_policy: int = 10
+        self,
+        query: str,
+        expanded_query: str,
+        user_profile: Dict,
+        chunks_per_policy: int = 10,
     ) -> List[Dict[str, Any]]:
         """
         Perform separate searches for each policy the user owns, then combine results.
@@ -274,7 +284,16 @@ class QueryProcessor:
         query_lower = query.lower()
         wants_amount = any(
             kw in query_lower
-            for kw in ["how much", "amount", "sum insured", "coverage", "covered for", "$", "money", "payout"]
+            for kw in [
+                "how much",
+                "amount",
+                "sum insured",
+                "coverage",
+                "covered for",
+                "$",
+                "money",
+                "payout",
+            ]
         )
 
         print(f"\n=== Multi-Policy Search ===")
@@ -283,29 +302,31 @@ class QueryProcessor:
         for filename in policy_filenames:
             print(f"\nSearching policy: {filename}")
             policy_results = self.search_engine.hybrid_search(
-                query=expanded_query,
-                top_k=chunks_per_policy,
-                filename_filter=filename
+                query=expanded_query, top_k=chunks_per_policy, filename_filter=filename
             )
             print(f"  → Retrieved {len(policy_results)} chunks from {filename}")
 
             # For amount queries on Life/CI policies, do an additional targeted search
             if wants_amount and "Manulife" in filename:
-                print(f"  → Amount query detected - performing additional targeted search")
+                print(
+                    f"  → Amount query detected - performing additional targeted search"
+                )
                 amount_query = "sum insured benefit amount payout table premium"
                 extra_results = self.search_engine.hybrid_search(
-                    query=amount_query,
-                    top_k=5,
-                    filename_filter=filename
+                    query=amount_query, top_k=5, filename_filter=filename
                 )
-                print(f"  → Retrieved {len(extra_results)} additional chunks with amount focus")
+                print(
+                    f"  → Retrieved {len(extra_results)} additional chunks with amount focus"
+                )
 
                 # Add extra results, avoiding duplicates
                 existing_content = {r.get("content", "") for r in policy_results}
                 for extra in extra_results:
                     if extra.get("content", "") not in existing_content:
                         policy_results.append(extra)
-                        print(f"     + Added extra chunk from page {extra.get('metadata', {}).get('page_number', '?')}")
+                        print(
+                            f"     + Added extra chunk from page {extra.get('metadata', {}).get('page_number', '?')}"
+                        )
 
             # Debug: Show page numbers and scores for Manulife
             if "Manulife" in filename:
@@ -317,14 +338,18 @@ class QueryProcessor:
                     content_preview = result.get("content", "")[:60].replace("\n", " ")
                     has_dollar = "$" in result.get("content", "")
                     dollar_marker = " [$]" if has_dollar else ""
-                    print(f"     #{i}: Page {page} (score: {score:.3f}){dollar_marker} - {content_preview}...")
+                    print(
+                        f"     #{i}: Page {page} (score: {score:.3f}){dollar_marker} - {content_preview}..."
+                    )
 
             # Tag each result with its policy for tracking
             for result in policy_results:
                 result["source_policy"] = filename
                 all_results.append(result)
 
-        print(f"\nTotal chunks retrieved: {len(all_results)} ({chunks_per_policy} per policy)")
+        print(
+            f"\nTotal chunks retrieved: {len(all_results)} ({chunks_per_policy} per policy)"
+        )
         print(f"=== End Multi-Policy Search ===\n")
 
         return all_results
@@ -387,7 +412,7 @@ class QueryProcessor:
         is_personal_batch: bool,
         user_profile: Optional[Dict],
         max_chunks: int = 30,
-        max_context_length: int = 12000  # Token limit
+        max_context_length: int = 12000,  # Token limit
     ) -> tuple[str, str]:
         """
         Prepares the context for AI with token management.
@@ -425,29 +450,50 @@ class QueryProcessor:
                         profile_info += f"    - Riders: None listed\n"
 
                     if exclusions:
-                        profile_info += f"    - !! IMPORTANT EXCLUSION: {exclusions} !!\n"
+                        profile_info += (
+                            f"    - !! IMPORTANT EXCLUSION: {exclusions} !!\n"
+                        )
         else:
             profile_info = "\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n- No user profile provided.\n"
 
         # ===== PART 2: Build Document Context (enhanced with token management) =====
 
         # Priority keywords
-        priority_keywords = ["coverage", "benefit", "limit", "sum assured", "sum insured",
-                            "premium", "claim", "deductible", "exclusion"]
+        priority_keywords = [
+            "coverage",
+            "benefit",
+            "limit",
+            "sum assured",
+            "sum insured",
+            "premium",
+            "claim",
+            "deductible",
+            "exclusion",
+        ]
 
         def is_priority_chunk(content: str) -> bool:
             content_lower = content.lower()
             return any(keyword in content_lower for keyword in priority_keywords)
 
         # Sort results: priority chunks first
-        priority_results = [r for r in search_results[:max_chunks] if is_priority_chunk(r.get("content", ""))]
-        other_results = [r for r in search_results[:max_chunks] if not is_priority_chunk(r.get("content", ""))]
+        priority_results = [
+            r
+            for r in search_results[:max_chunks]
+            if is_priority_chunk(r.get("content", ""))
+        ]
+        other_results = [
+            r
+            for r in search_results[:max_chunks]
+            if not is_priority_chunk(r.get("content", ""))
+        ]
         sorted_results = priority_results + other_results
 
         context_parts = []
         total_length = 0
 
-        print(f"Building context from top {len(sorted_results)} chunks (priority-sorted)...")
+        print(
+            f"Building context from top {len(sorted_results)} chunks (priority-sorted)..."
+        )
 
         for i, result in enumerate(sorted_results, 1):
             content = result.get("content", "").strip()
@@ -466,13 +512,15 @@ class QueryProcessor:
 
             # Token management
             if total_length + len(chunk_text) > max_context_length:
-                print(f"⚠️ Reached token limit ({max_context_length}). Stopping at {i} chunks.")
+                print(
+                    f"⚠️ Reached token limit ({max_context_length}). Stopping at {i} chunks."
+                )
 
                 # Try to fit a trimmed version if it's important
                 if is_priority_chunk(content):
                     remaining_space = max_context_length - total_length
                     if remaining_space > 500:  # Only trim if we have reasonable space
-                        trimmed_content = content[:remaining_space - 200] + "..."
+                        trimmed_content = content[: remaining_space - 200] + "..."
                         chunk_text = f"{source_ref}\nPAGE HEADING: {heading}\n\n{trimmed_content}"
                         context_parts.append(chunk_text)
                         print(f"  ✂️ Trimmed priority chunk from {filename}")
@@ -489,7 +537,9 @@ class QueryProcessor:
             context_from_docs = "No relevant document chunks found."
         else:
             context_from_docs = "\n\n---\n\n".join(context_parts)
-            print(f"✅ Built context: {len(context_parts)} chunks, ~{total_length} chars")
+            print(
+                f"✅ Built context: {len(context_parts)} chunks, ~{total_length} chars"
+            )
 
         return profile_info, context_from_docs
 
@@ -532,7 +582,7 @@ class QueryProcessor:
                     query=query,
                     expanded_query=expanded_query,
                     user_profile=user_profile,
-                    chunks_per_policy=10  # 10 chunks per policy
+                    chunks_per_policy=10,  # 10 chunks per policy
                 )
             else:
                 raw_search_results = self.search_engine.hybrid_search(
@@ -593,7 +643,14 @@ class QueryProcessor:
                 # Heuristic forced inclusion from index if amounts still missing
                 forced_cce = self._inject_top_plan_chunks(
                     plan_substr="critical care enhancer",
-                    signals=["sum insured", "$", "benefit", "payout", "500,000", "1,000,000"],
+                    signals=[
+                        "sum insured",
+                        "$",
+                        "benefit",
+                        "payout",
+                        "500,000",
+                        "1,000,000",
+                    ],
                     max_hits=2,
                 )
                 raw_search_results.extend(forced_cce)
@@ -606,7 +663,14 @@ class QueryProcessor:
                 raw_search_results.extend(extra_health)
                 forced_supreme = self._inject_top_plan_chunks(
                     plan_substr="supremehealth",
-                    signals=["deductible", "co-insurance", "$3,500", "ward", "co payment", "co-payment"],
+                    signals=[
+                        "deductible",
+                        "co-insurance",
+                        "$3,500",
+                        "ward",
+                        "co payment",
+                        "co-payment",
+                    ],
                     max_hits=2,
                 )
                 raw_search_results.extend(forced_supreme)
@@ -628,7 +692,9 @@ class QueryProcessor:
                     log_file.write(
                         f"Total reranked: {len(unique_results)} (showing top {min(50, len(unique_results))})\n\n"
                     )
-                    for i, r in enumerate(unique_results[: min(50, len(unique_results))], 1):
+                    for i, r in enumerate(
+                        unique_results[: min(50, len(unique_results))], 1
+                    ):
                         meta = r.get("metadata", {}) or {}
                         filename = meta.get("filename", "Unknown")
                         page = meta.get("page_number", "N/A")
@@ -642,9 +708,7 @@ class QueryProcessor:
 
             # Prepare context early for potential deep research use
             profile_info, context_from_docs = self._prepare_context(
-                unique_results,
-                is_personal_batch,
-                user_profile
+                unique_results, is_personal_batch, user_profile
             )
 
             # Check if no results found
@@ -664,7 +728,9 @@ class QueryProcessor:
             normal_response_chunks = []
             stored_rag_chunks = []
 
-            for chunk in self._generate_response_stream(query, unique_results, is_personal_batch, user_profile):
+            for chunk in self._generate_response_stream(
+                query, unique_results, is_personal_batch, user_profile
+            ):
                 stored_rag_chunks.append(chunk)  # Store for later
                 # Collect for analysis
                 try:
@@ -677,16 +743,21 @@ class QueryProcessor:
             # Step 2: Analyze the collected response quality
             full_response = "".join(normal_response_chunks)
             response_analyzer = ResponseAnalyzer()
-            is_satisfactory = response_analyzer._analyze_response_quality(query, full_response, user_profile)
+            is_satisfactory = response_analyzer._analyze_response_quality(
+                query, full_response, user_profile
+            )
 
             # Step 3: If bad → trigger deep research
+            print(f"🔍 DEBUG: is_satisfactory={is_satisfactory}, deep_research_enabled={self.deep_research_enabled}")
             if not is_satisfactory and self.deep_research_enabled:
                 print("⚠️ Normal RAG response insufficient. Triggering deep research...")
                 # Notify user
-                yield "data: " + json.dumps({
-                    "status": "enhancing_response",
-                    "message": "Let me search for more comprehensive information..."
-                }) + "\n\n"
+                yield "data: " + json.dumps(
+                    {
+                        "status": "enhancing_response",
+                        "message": "Let me search for more comprehensive information...",
+                    }
+                ) + "\n\n"
 
                 # Run deep research
                 from src.run_ui import run_ui
@@ -699,7 +770,7 @@ class QueryProcessor:
                         query=query,
                         intent=intent,
                         profile_info=profile_info,
-                        context_from_docs=context_from_docs
+                        context_from_docs=context_from_docs,
                     ).__aiter__()
 
                     while True:
