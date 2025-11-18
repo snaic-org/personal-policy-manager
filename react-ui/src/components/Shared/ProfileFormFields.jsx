@@ -9,8 +9,6 @@ export default function ProfileFormFields({
   initialProfile, 
   onSave, 
   saveButtonText = "Save Info",
-  // customerId is used to make form field 'id' attributes unique
-  // which is important for accessibility.
   formIdPrefix = 'user' 
 }) {
   
@@ -23,8 +21,6 @@ export default function ProfileFormFields({
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
-  // When the initialProfile prop changes (e.g., after a
-  // parent refetch), update the local state.
   useEffect(() => {
     if (initialProfile) {
       setName(initialProfile.name || '');
@@ -40,19 +36,14 @@ export default function ProfileFormFields({
     setError('');
     setMessage('');
 
-    // Construct the data to save, merging it with the
-    // full profile to avoid overwriting other data
     const updatedProfile = {
       ...initialProfile,
-      name: name,
+      name: name.trim(),
       date_of_birth: dob,
       gender: gender,
       smoking_status: smokingStatus
     };
 
-    // Call the save function passed in from the parent
-    // The parent is responsible for the actual API call
-    // and letting us know if it succeeded.
     const result = await onSave(updatedProfile);
 
     if (result.success) {
@@ -66,7 +57,7 @@ export default function ProfileFormFields({
 
   return (
     <div className="profile-form-container" style={{ marginBottom: '24px' }}>
-      <h4>Customer Personal Info</h4>
+      <h3>Edit Customer Personal Info</h3>
       <form onSubmit={handleSave}>
         <div className="form-group">
           <label htmlFor={`name-${formIdPrefix}`} style={{ marginBottom: '4px', fontSize: '14px' }}>Full Name</label>

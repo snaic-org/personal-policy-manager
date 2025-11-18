@@ -1,13 +1,5 @@
 const BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
-function parseJwt(token) {
-  try {
-    return JSON.parse(atob(token.split('.')[1]));
-  } catch (e) {
-    return null;
-  }
-}
-
 // --- Auth Functions ---
 
 export async function login(username, password) {
@@ -16,26 +8,29 @@ export async function login(username, password) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password })
   });
-
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Unknown error' }));
     throw new Error(err.error || `HTTP ${res.status}`);
   }
-
-  const data = await res.json(); // data will be { access_token, role }
+  const data = await res.json();
   localStorage.setItem('token', data.access_token);
-  
-  return data; // Returns { access_token, role }
+  return data;
 }
 
-// Customer Registration
-export async function register(username, password, passwordConfirm) {
+export async function register(username, password, passwordConfirm, profileData) {
   const res = await fetch(`${BASE}/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password, passwordConfirm })
+    body: JSON.stringify({
+      username,
+      password,
+      passwordConfirm,
+      name: profileData.name,
+      date_of_birth: profileData.dob,
+      gender: profileData.gender,
+      smoking_status: profileData.smokingStatus
+    })
   });
-
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Unknown error' }));
     throw new Error(err.error || `HTTP ${res.status}`);
@@ -49,7 +44,6 @@ export async function registerInsurer(username, password, passwordConfirm, invit
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password, passwordConfirm, inviteCode })
   });
-
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Unknown error' }));
     throw new Error(err.error || `HTTP ${res.status}`);
@@ -61,6 +55,18 @@ export function logout() {
   localStorage.removeItem('token');
 }
 
+export async function getUserInfo() {
+  const res = await fetch(`${BASE}/me`, {
+    method: 'GET',
+    headers: { ...getAuthHeader() }
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
 // --- Helper to get Auth Header ---
 
 function getAuthHeader() {
@@ -69,283 +75,48 @@ function getAuthHeader() {
   return { 'Authorization': `Bearer ${token}` };
 }
 
-// --- Document Management Functions ---
+// --- Unified Data Functions
 
-export async function uploadPolicies(files) {
-  const formData = new FormData();
-  files.forEach(file => {
-    formData.append('files', file);
-  });
-  
-  const res = await fetch(`${BASE}/upload`, {
-    method: 'POST',
-    headers: {
-      ...getAuthHeader() // Secure this endpoint with our token
-    },
-    body: formData // No Content-Type header, browser will set it for FormData
-  });
-  
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(err.error || `HTTP ${res.status}`);
+/**
+ * Builds a dynamic URL for data endpoints.
+ * @param {string} endpoint - The data endpoint (e.g., "profile", "files", "history").
+ * @param {number|null} customerId - Optional customer ID.
+ * @param {string} action - Optional action (e.g., "upload", "delete").
+ * @returns {string} The constructed URL.
+ */
+function buildDataUrl(endpoint, customerId = null, action = null) {
+  let url = `${BASE}/api/data/${endpoint}`;
+  if (customerId) {
+    url += `/${customerId}`;
   }
+  if (action) {
+    url += `/${action}`;
+  }
+  return url;
+}
 
+/**
+ * Fetches the profile for the current user OR a specific customer.
+ * @param {number|null} customerId - If provided, fetches profile for this customer (insurer only).
+ */
+export async function getProfile(customerId = null) {
+  const url = buildDataUrl('profile', customerId);
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { ...getAuthHeader() }
+  });
+  if (!res.ok) throw new Error((await res.json()).error);
   return res.json();
 }
 
-export async function getUserFiles() {
-  const res = await fetch(`${BASE}/list_files`, {
-    method: 'GET',
-    headers: {
-      ...getAuthHeader()
-    }
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-
-  return res.json(); // will return { files: ["a.pdf", "b.docx"] }
-}
-
-export async function deletePolicies(filenames) {
-  const res = await fetch(`${BASE}/delete_files`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...getAuthHeader()
-    },
-    body: JSON.stringify({ filenames })
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-
-  return res.json();
-}
-
-export function getFileUrl(filename) {
-  // Returns the full URL for a file in the user's document folder
-  // Used for opening files in new tabs via citation links
-  return `${BASE}/files/${filename}`;
-}
-
-export async function downloadFile(filename) {
-  // Downloads a file from the user's document folder
-  try {
-    const token = localStorage.getItem('token');
-    if (!token) {
-      throw new Error('Not authenticated');
-    }
-
-    const response = await fetch(`${BASE}/files/${filename}`, {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    });
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to download file' }));
-      throw new Error(error.error || 'Failed to download file');
-    }
-
-    // Get the file as a blob
-    const blob = await response.blob();
-    
-    // Create a blob URL
-    const blobUrl = URL.createObjectURL(blob);
-    
-    // Create a temporary anchor element to trigger download
-    const link = document.createElement('a');
-    link.href = blobUrl;
-    link.download = filename; // This triggers download instead of opening
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-
-    // Clean up the blob URL
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
-  } catch (error) {
-    console.error('Error downloading file:', error);
-    throw error;
-  }
-}
-
-  // --- Chatbot Functions ---
-  
-  export async function getHistory() {
-    const res = await fetch(`${BASE}/history`, {
-      method: 'GET',
-      headers: {
-        ...getAuthHeader()
-      }
-    });
-  
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(err.error || `HTTP ${res.status}`);
-    }
-    
-    return res.json(); // returns [{ role: 'user', content: '...' }, ...]
-  }
-
-  export async function clearHistory() {
-    const res = await fetch(`${BASE}/history`, {
-      method: 'DELETE',
-      headers: {
-        ...getAuthHeader()
-      }
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(err.error || `HTTP ${res.status}`);
-    }
-
-    return res.json();
-  }
-  
-  export async function sendQuery(query) {
-    const body = { query };
-  
-    const res = await fetch(`${BASE}/query`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...getAuthHeader() // Add our token to the request
-      },
-      body: JSON.stringify(body)
-    });
-  
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(err.error || `HTTP ${res.status}`);
-    }
-  
-    return res.json();
-  }
-  
-  export async function sendQueryStream(query, onChunk, onComplete, onError) {
-    const body = { query };
-  
-    try {
-      const res = await fetch(`${BASE}/query/stream`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAuthHeader()
-        },
-        body: JSON.stringify(body)
-      });
-  
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(err.error || `HTTP ${res.status}`);
-      }
-  
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-  
-      while (true) {
-        const { done, value } = await reader.read();
-  
-        if (done) {
-          break;
-        }
-  
-        // Decode the chunk and add to buffer
-        buffer += decoder.decode(value, { stream: true });
-  
-        // Process complete SSE messages (separated by \n\n)
-        const lines = buffer.split('\n\n');
-        buffer = lines.pop(); // Keep incomplete message in buffer
-  
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.substring(6)); // Remove 'data: ' prefix
-  
-              if (data.error) {
-                onError(new Error(data.error));
-                return;
-              }
-
-              let contentChunk = null;
-
-              if (data.content) {
-                // 1. Handle normal RAG content
-                contentChunk = data.content;
-              } else if (data.report) {
-                // 2. Handle deep research 'report'
-                contentChunk = data.report;
-              } else if (data.answer) {
-                // 3. Handle deep research 'answer'
-                contentChunk = data.answer;
-              }
-
-              // Send the chunk if we found one
-              if (contentChunk) {
-                onChunk(contentChunk);
-              }
-              
-              // Handle 'done' signal
-              if (data.done) {
-                onComplete();
-                return;
-              }
-            } catch (e) {
-              console.error('Error parsing SSE data:', e);
-            }
-          }
-        }
-      }
-  
-      onComplete();
-    } catch (e) {
-      onError(e);
-    }
-  }
-
-// --- User Profile Functions ---
-
-export async function getUserInfo() {
-  const res = await fetch(`${BASE}/me`, {
-    method: 'GET',
-    headers: {
-      ...getAuthHeader()
-    }
-  });
-  
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-  
-  return res.json(); // returns { id: 1, username: 'testuser' }
-}
-
-export async function getProfile() {
-  const res = await fetch(`${BASE}/profile`, {
-    method: 'GET',
-    headers: {
-      ...getAuthHeader()
-    }
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Failed to fetch profile' }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-  
-  return res.json(); // returns profile JSON
-}
-
-export async function saveProfile(profileData) {
-  const res = await fetch(`${BASE}/profile`, {
+/**
+ * Saves the profile for the current user OR a specific customer.
+ * @param {object} profileData - The full profile object to save.
+ * @param {number|null} customerId - If provided, saves profile for this customer (insurer only).
+ */
+export async function saveProfile(profileData, customerId = null) {
+  const url = buildDataUrl('profile', customerId);
+  const res = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -353,69 +124,37 @@ export async function saveProfile(profileData) {
     },
     body: JSON.stringify(profileData)
   });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Failed to save profile' }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-
-  return res.json(); // returns { message: "..." }
+  if (!res.ok) throw new Error((await res.json()).error);
+  return res.json();
 }
 
-// --- Insurer Functions ---
 /**
- * (Insurer) Get all customers managed by this insurer.
+ * Gets the file list for the current user OR a specific customer.
+ * @param {number|null} customerId - If provided, gets files for this customer (insurer only).
  */
-export async function getInsurerCustomers() {
-  const res = await fetch(`${BASE}/api/insurer/customers`, {
+export async function getUserFiles(customerId = null) {
+  const url = buildDataUrl('files', customerId);
+  const res = await fetch(url, {
     method: 'GET',
     headers: { ...getAuthHeader() }
   });
   if (!res.ok) throw new Error((await res.json()).error);
-  return res.json(); // Returns [{ id: 1, username: 'customer_a' }, ...]
+  return res.json();
 }
 
 /**
- * (Insurer) Create a new customer.
+ * Uploads files for the current user OR a specific customer.
+ * @param {File[]} files - An array of File objects.
+ * @param {number|null} customerId - If provided, uploads for this customer (insurer only).
  */
-export async function createCustomer(username) {
-  const res = await fetch(`${BASE}/api/insurer/customers`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...getAuthHeader()
-    },
-    body: JSON.stringify({ username })
-  });
-  if (!res.ok) throw new Error((await res.json()).error);
-  return res.json(); // Returns { message, customer_id, username, password }
-}
-
-/**
- * (Insurer) Get the file list for a specific customer.
- */
-export async function getInsurerCustomerFiles(customerId) {
-  const res = await fetch(`${BASE}/api/insurer/list_files/${customerId}`, {
-    // Note: This endpoint needs to be created in main.py
-    // It should be an @insurer_required endpoint that proxies
-    // the logic of /list_files for a specific user.
-    method: 'GET',
-    headers: { ...getAuthHeader() }
-  });
-  if (!res.ok) throw new Error((await res.json()).error);
-  return res.json(); // Returns { files: ["a.pdf", "b.docx"] }
-}
-
-/**
- * (Insurer) Upload policies for a specific customer.
- */
-export async function uploadForCustomer(customerId, files) {
+export async function uploadPolicies(files, customerId = null) {
+  const url = buildDataUrl('files', customerId, 'upload');
   const formData = new FormData();
   files.forEach(file => {
     formData.append('files', file);
   });
   
-  const res = await fetch(`${BASE}/api/insurer/upload/${customerId}`, {
+  const res = await fetch(url, {
     method: 'POST',
     headers: { ...getAuthHeader() },
     body: formData
@@ -425,11 +164,13 @@ export async function uploadForCustomer(customerId, files) {
 }
 
 /**
- * (Insurer) Delete policies for a specific customer.
+ * Deletes files for the current user OR a specific customer.
+ * @param {string[]} filenames - An array of filenames to delete.
+ * @param {number|null} customerId - If provided, deletes for this customer (insurer only).
  */
-export async function deleteForCustomer(customerId, filenames) {
-  const res = await fetch(`${BASE}/api/insurer/delete_files/${customerId}`, {
-    // Note: This endpoint also needs to be created in main.py
+export async function deletePolicies(filenames, customerId = null) {
+  const url = buildDataUrl('files', customerId, 'delete');
+  const res = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -442,11 +183,12 @@ export async function deleteForCustomer(customerId, filenames) {
 }
 
 /**
- * (Insurer) Get chat history for a specific customer.
+ * Gets chat history for the current user OR a specific customer.
+ * @param {number|null} customerId - If provided, gets history for this customer (insurer only).
  */
-export async function getInsurerHistory(customerId) {
-  const res = await fetch(`${BASE}/api/insurer/history/${customerId}`, {
-    // Note: This endpoint needs to be created in main.py
+export async function getHistory(customerId = null) {
+  const url = buildDataUrl('history', customerId);
+  const res = await fetch(url, {
     method: 'GET',
     headers: { ...getAuthHeader() }
   });
@@ -455,10 +197,12 @@ export async function getInsurerHistory(customerId) {
 }
 
 /**
- * (Insurer) Clear chat history for a specific customer.
+ * Clears chat history for the current user OR a specific customer.
+ * @param {number|null} customerId - If provided, clears history for this customer (insurer only).
  */
-export async function clearInsurerHistory(customerId) {
-  const res = await fetch(`${BASE}/api/insurer/history/${customerId}`, {
+export async function clearHistory(customerId = null) {
+  const url = buildDataUrl('history', customerId);
+  const res = await fetch(url, {
     method: 'DELETE',
     headers: { ...getAuthHeader() }
   });
@@ -467,12 +211,19 @@ export async function clearInsurerHistory(customerId) {
 }
 
 /**
- * (Insurer) Send a query as the insurer for a specific customer.
+ * Sends a streaming query for the current user OR a specific customer.
+ * @param {string} query - The user's query.
+ * @param {function} onChunk - Callback for each data chunk.
+ * @param {function} onComplete - Callback when stream finishes.
+ * @param {function} onError - Callback for any errors.
+ * @param {number|null} customerId - If provided, queries for this customer (insurer only).
  */
-export async function sendInsurerQueryStream(customerId, query, onChunk, onComplete, onError) {
+export async function sendQueryStream(query, onChunk, onComplete, onError, customerId = null) {
+  const url = buildDataUrl('query/stream', customerId);
   const body = { query };
+  
   try {
-    const res = await fetch(`${BASE}/api/insurer/query/stream/${customerId}`, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -495,7 +246,8 @@ export async function sendInsurerQueryStream(customerId, query, onChunk, onCompl
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n\n');
-      buffer = lines.pop();
+      buffer = lines.pop(); // Keep incomplete message in buffer
+
       for (const line of lines) {
         if (line.startsWith('data: ')) {
           try {
@@ -505,45 +257,15 @@ export async function sendInsurerQueryStream(customerId, query, onChunk, onCompl
               return;
             }
 
-            let contentChunk = null;
-
-            if (data.content) {
-              // 1. Handle normal RAG content
-              contentChunk = data.content;
-            } else if (data.report) {
-              // 2. Handle deep research 'report'
-              contentChunk = data.report;
-            } else if (data.answer) {
-              // 3. Handle deep research 'answer'
-              contentChunk = data.answer;
-            } else if (data.info) {
-              // 4. Handle 'info' messages
-              contentChunk = `[Info: ${data.info}]\n`;
-            } else if (data.warning) {
-              // 5. Handle 'warning' messages
-              contentChunk = `[Warning: ${data.warning}]\n`;
-            } else if (data.followup_questions && data.followup_questions.length > 0) {
-              // 6. Handle follow-up questions
-              const questions = data.followup_questions.map(q => `- ${q}`).join('\n');
-              contentChunk = `I have some follow-up questions:\n${questions}\n`;
-            }
-
-            // Send the chunk if we found one
+            let contentChunk = data.content || data.report || data.answer;
             if (contentChunk) {
               onChunk(contentChunk);
             }
             
-            // 7. Handle 'done' signal
             if (data.done) {
               onComplete();
               return;
             }
-            
-            // if (data.content) onChunk(data.content);
-            // if (data.done) {
-            //   onComplete();
-            //   return;
-            // }
           } catch (e) { console.error('Error parsing SSE data:', e); }
         }
       }
@@ -554,11 +276,55 @@ export async function sendInsurerQueryStream(customerId, query, onChunk, onCompl
   }
 }
 
+// --- File Download Functions ---
+
 /**
- * (Insurer) Get the profile for a specific customer.
+ * Downloads a file.
+ * If customerId is provided (Insurer), uses the secure endpoint.
+ * If not (Customer), uses the base /files/ endpoint.
+ * @param {string} filename - The name of the file to download.
+ * @param {number|null} customerId - Optional customer ID for insurer requests.
  */
-export async function getInsurerProfile(customerId) {
-  const res = await fetch(`${BASE}/api/insurer/profile/${customerId}`, {
+export async function downloadFile(filename, customerId = null) {
+  let url;
+  if (customerId) {
+    url = `${BASE}/api/data/files/${customerId}/${filename}`;
+  } else {
+    url = `${BASE}/files/${filename}`;
+  }
+  
+  try {
+    const response = await fetch(url, {
+      headers: { ...getAuthHeader() }
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to download file' }));
+      throw new Error(error.error || 'Failed to download file');
+    }
+
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
+  } catch (error) {
+    console.error('Error downloading file:', error);
+    throw error;
+  }
+}
+
+// --- Insurer-Only Functions ---
+
+/**
+ * (Insurer) Get all customers managed by this insurer.
+ */
+export async function getInsurerCustomers() {
+  const res = await fetch(`${BASE}/api/insurer/customers`, {
     method: 'GET',
     headers: { ...getAuthHeader() }
   });
@@ -567,16 +333,22 @@ export async function getInsurerProfile(customerId) {
 }
 
 /**
- * (Insurer) Save the profile for a specific customer.
+ * (Insurer) Create a new customer.
  */
-export async function saveInsurerProfile(customerId, profileData) {
-  const res = await fetch(`${BASE}/api/insurer/profile/${customerId}`, {
+export async function createCustomer(profileData) {
+  const res = await fetch(`${BASE}/api/insurer/customers`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...getAuthHeader()
     },
-    body: JSON.stringify(profileData)
+    body: JSON.stringify({
+      username: profileData.username,
+      name: profileData.name,
+      date_of_birth: profileData.dob,
+      gender: profileData.gender,
+      smoking_status: profileData.smokingStatus
+    })
   });
   if (!res.ok) throw new Error((await res.json()).error);
   return res.json();

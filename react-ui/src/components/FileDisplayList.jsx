@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 
-// Helper function
 const getFileType = (filename) => {
   const ext = filename.split('.').pop().toLowerCase();
   if (ext === 'pdf') return 'pdf';
@@ -10,24 +9,17 @@ const getFileType = (filename) => {
 };
 
 export default function FileDisplayList({
-  // Data props
   files = [],
   loading = false,
   error = null,
   isDeleting = false,
-  
-  // UI Props
   title,
   emptyListMessage = "No files found.",
-
-  // Action Props (functions to call on parent)
   onDelete,
   onDownload
 }) {
   const [selectedFiles, setSelectedFiles] = useState(new Set());
 
-  // When the files list changes (e.g., after a delete),
-  // clear the selection.
   useEffect(() => {
     setSelectedFiles(new Set());
   }, [files]);
@@ -44,22 +36,19 @@ export default function FileDisplayList({
 
   const handleSelectAll = () => {
     if (selectedFiles.size === files.length) {
-      setSelectedFiles(new Set()); // Deselect all
+      setSelectedFiles(new Set());
     } else {
-      setSelectedFiles(new Set(files)); // Select all
+      setSelectedFiles(new Set(files));
     }
   };
 
   const handleDeleteClick = () => {
-    // Pass the array of selected files to the parent
-    // The parent will handle confirmation and API call
     if (onDelete) {
       onDelete(Array.from(selectedFiles));
     }
   };
 
   const handleDownloadClick = (filename) => {
-    // Pass the specific file to the parent
     if (onDownload) {
       onDownload(filename);
     }

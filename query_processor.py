@@ -381,6 +381,118 @@ class QueryProcessor:
             # Fallback to original query + manual expansion
             return f"{query} {manual_expansion}"
 
+    def _prepare_context(
+        self,
+        search_results: List[Dict],
+        is_personal_batch: bool,
+        user_profile: Optional[Dict],
+        max_chunks: int = 30,
+        max_context_length: int = 12000  # Token limit
+    ) -> tuple[str, str]:
+        """
+        Prepares the context for AI with token management.
+        Returns: (profile_info, context_from_docs)
+        """
+
+        # ===== PART 1: Build Profile Info =====
+        if is_personal_batch and user_profile:
+            user_name = user_profile.get("name", "User")
+            user_dob = user_profile.get("date_of_birth", "N/A")
+            insurance_policies = user_profile.get("insurance_policies", {})
+
+            profile_info = f"\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n"
+            profile_info += f"- User Name: {user_name}\n"
+            profile_info += f"- User DOB: {user_dob}\n"
+
+            if insurance_policies:
+                profile_info += f"- User's Policies:\n"
+                for filename, policy_data in insurance_policies.items():
+                    plan = policy_data.get("plan_name", "Unknown Plan")
+                    tier = policy_data.get("tier", "N/A")
+                    riders = policy_data.get("riders", [])
+                    underwriting = policy_data.get("underwriting", {})
+                    exclusions = underwriting.get("exclusions")
+
+                    profile_info += f"  - Policy: {plan} (Tier: {tier})\n"
+
+                    if riders:
+                        rider_names = [
+                            r.get("plan_name", r) if isinstance(r, dict) else r
+                            for r in riders
+                        ]
+                        profile_info += f"    - Riders: {', '.join(rider_names)}\n"
+                    else:
+                        profile_info += f"    - Riders: None listed\n"
+
+                    if exclusions:
+                        profile_info += f"    - !! IMPORTANT EXCLUSION: {exclusions} !!\n"
+        else:
+            profile_info = "\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n- No user profile provided.\n"
+
+        # ===== PART 2: Build Document Context (enhanced with token management) =====
+
+        # Priority keywords
+        priority_keywords = ["coverage", "benefit", "limit", "sum assured", "sum insured",
+                            "premium", "claim", "deductible", "exclusion"]
+
+        def is_priority_chunk(content: str) -> bool:
+            content_lower = content.lower()
+            return any(keyword in content_lower for keyword in priority_keywords)
+
+        # Sort results: priority chunks first
+        priority_results = [r for r in search_results[:max_chunks] if is_priority_chunk(r.get("content", ""))]
+        other_results = [r for r in search_results[:max_chunks] if not is_priority_chunk(r.get("content", ""))]
+        sorted_results = priority_results + other_results
+
+        context_parts = []
+        total_length = 0
+
+        print(f"Building context from top {len(sorted_results)} chunks (priority-sorted)...")
+
+        for i, result in enumerate(sorted_results, 1):
+            content = result.get("content", "").strip()
+            metadata = result.get("metadata", {})
+
+            if not content:
+                continue
+
+            filename = metadata.get("filename", "Unknown Document")
+            page = metadata.get("page_number", "N/A")
+            heading = metadata.get("page_heading", "General Information")
+
+            # Format with citation
+            source_ref = f"[Source {i}: {filename}, Page {page}]"
+            chunk_text = f"{source_ref}\nPAGE HEADING: {heading}\n\n{content}"
+
+            # Token management
+            if total_length + len(chunk_text) > max_context_length:
+                print(f"⚠️ Reached token limit ({max_context_length}). Stopping at {i} chunks.")
+
+                # Try to fit a trimmed version if it's important
+                if is_priority_chunk(content):
+                    remaining_space = max_context_length - total_length
+                    if remaining_space > 500:  # Only trim if we have reasonable space
+                        trimmed_content = content[:remaining_space - 200] + "..."
+                        chunk_text = f"{source_ref}\nPAGE HEADING: {heading}\n\n{trimmed_content}"
+                        context_parts.append(chunk_text)
+                        print(f"  ✂️ Trimmed priority chunk from {filename}")
+                break
+
+            context_parts.append(chunk_text)
+            total_length += len(chunk_text)
+
+            # Log priority chunks
+            if is_priority_chunk(content):
+                print(f"  ⭐ Priority chunk: {filename} Page {page}")
+
+        if not context_parts:
+            context_from_docs = "No relevant document chunks found."
+        else:
+            context_from_docs = "\n\n---\n\n".join(context_parts)
+            print(f"✅ Built context: {len(context_parts)} chunks, ~{total_length} chars")
+
+        return profile_info, context_from_docs
+
     def process_query_stream(
         self, query: str, batch_id: str = None, user_profile: Optional[Dict] = None
     ):
@@ -528,31 +640,15 @@ class QueryProcessor:
             except Exception as debug_err:
                 print(f"[DEBUG] Failed to write reranked chunk log: {debug_err}")
 
-            # Check if user explicitly asked to avoid deep research
-            query_lower = query.lower()
-            user_wants_own_policies_only = (
-                "only refer to" in query_lower
-                or "policies i own" in query_lower
-                or "my policies" in query_lower
-                or "do not use deep research" in query_lower
+            # Prepare context early for potential deep research use
+            profile_info, context_from_docs = self._prepare_context(
+                unique_results,
+                is_personal_batch,
+                user_profile
             )
 
-            # Determine if we need deep research (feature-flagged off by default)
-            needs_research = False
-            if self.deep_research_enabled:
-                needs_research = (
-                    len(unique_results) == 0 and not user_wants_own_policies_only
-                ) or (
-                    intent.get("requires_external_info", False)
-                    and not user_wants_own_policies_only
-                )
-
-            # Debug logging
-            print(f"User wants own policies only: {user_wants_own_policies_only}")
-            print(f"Needs research: {needs_research}")
-            print(f"Unique results count: {len(unique_results)}")
-
-            if not unique_results and not needs_research:
+            # Check if no results found
+            if not unique_results:
                 if is_personal_batch:
                     error_msg = f"I couldn't find relevant information in your uploaded documents for the question: '{query}'."
                 else:
@@ -562,18 +658,49 @@ class QueryProcessor:
                 ) + "\n\n"
                 return
 
-            # Deep research routing (only if truly needed)
-            if needs_research:
-                start_research_time = time.time()
-                print("Starting deep research streaming response...")
+            # ===== NEW: ANALYZE → RETRY LOGIC =====
+            # Step 1: Try normal RAG first (stream AND collect, but don't show to user yet)
+            print("🔄 Attempting normal RAG response...")
+            normal_response_chunks = []
+            stored_rag_chunks = []
 
+            for chunk in self._generate_response_stream(query, unique_results, is_personal_batch, user_profile):
+                stored_rag_chunks.append(chunk)  # Store for later
+                # Collect for analysis
+                try:
+                    chunk_data = json.loads(chunk.replace("data: ", "").strip())
+                    if "content" in chunk_data:
+                        normal_response_chunks.append(chunk_data["content"])
+                except:
+                    pass  # Ignore parsing errors for "done" chunks
+
+            # Step 2: Analyze the collected response quality
+            full_response = "".join(normal_response_chunks)
+            response_analyzer = ResponseAnalyzer()
+            is_satisfactory = response_analyzer._analyze_response_quality(query, full_response, user_profile)
+
+            # Step 3: If bad → trigger deep research
+            if not is_satisfactory and self.deep_research_enabled:
+                print("⚠️ Normal RAG response insufficient. Triggering deep research...")
+                # Notify user
+                yield "data: " + json.dumps({
+                    "status": "enhancing_response",
+                    "message": "Let me search for more comprehensive information..."
+                }) + "\n\n"
+
+                # Run deep research
                 from src.run_ui import run_ui
 
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
 
                 try:
-                    async_gen = run_ui(query, intent, unique_results).__aiter__()
+                    async_gen = run_ui(
+                        query=query,
+                        intent=intent,
+                        profile_info=profile_info,
+                        context_from_docs=context_from_docs
+                    ).__aiter__()
 
                     while True:
                         try:
@@ -581,25 +708,18 @@ class QueryProcessor:
                             yield "data: " + json.dumps(chunk) + "\n\n"
                         except StopAsyncIteration:
                             break
-
                 finally:
                     loop.close()
 
-                end_research_time = time.time()
-                print(
-                    f"Total deep research processing time: {end_research_time - start_research_time:.2f}s"
-                )
+                print("✅ Deep research completed.")
+            else:
+                print("✅ Normal RAG response satisfactory. Streaming to user...")
+                # Yield ALL stored RAG chunks
+                for chunk in stored_rag_chunks:
+                    yield chunk
 
-                yield "data: " + json.dumps({"done": True}) + "\n\n"
-                print("Finished streaming deep research response.")
-
-                return  # CRITICAL: prevents normal RAG stream from running
-
-            # NORMAL RAG streaming with stream capture
-            if unique_results:
-                yield from self._generate_response_stream(
-                    query, unique_results, is_personal_batch, user_profile
-                )
+            # Signal completion
+            yield "data: " + json.dumps({"done": True}) + "\n\n"
 
             processing_time = time.time() - start_time
             print(f"Total processing time: {processing_time:.2f}s")

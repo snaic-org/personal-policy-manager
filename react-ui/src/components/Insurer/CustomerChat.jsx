@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import * as api from '../../services/api';
+import { getHistory, sendQueryStream, clearHistory } from '../../services/api';
 import MessageFormatter from '../MessageFormatter';
 
 export default function CustomerChat({ customerId }) {
@@ -10,9 +10,8 @@ export default function CustomerChat({ customerId }) {
   const textareaRef = useRef(null);
 
   useEffect(() => {
-    // Load this customer's chat history
     setLoading(true);
-    api.getInsurerHistory(customerId)
+    getHistory(customerId)
       .then(setHistory)
       .catch(err => {
         addMessage('bot', `Error loading chat history: ${err.message}`);
@@ -20,7 +19,7 @@ export default function CustomerChat({ customerId }) {
       .finally(() => {
         setLoading(false);
       });
-  }, [customerId]); // Re-fetch if customerId changes
+  }, [customerId]);
 
   const addMessage = (role, content) => {
      setHistory(prev => [...prev, { role, content }]);
@@ -35,14 +34,13 @@ export default function CustomerChat({ customerId }) {
     setQuery('');
 
     const botMessageIndex = history.length + 1;
-    addMessage('bot', ''); // Add placeholder
+    addMessage('bot', '');
 
     try {
       let streamedContent = '';
-      await api.sendInsurerQueryStream(
-        customerId,
+      await sendQueryStream(
         currentQuery,
-        (chunk) => { // onChunk
+        (chunk) => {
           streamedContent += chunk;
           setHistory(prev => {
             const updated = [...prev];
@@ -50,17 +48,15 @@ export default function CustomerChat({ customerId }) {
             return updated;
           });
         },
-        () => { // onComplete
-          setLoading(false);
-        },
-        (error) => { // onError
+        () => { setLoading(false); },
+        (error) => {
           setHistory(prev => {
             const updated = [...prev];
             updated[botMessageIndex] = { role: 'bot', content: `Error: ${error.message}` };
             return updated;
           });
           setLoading(false);
-        }
+        }, customerId
       );
     } catch (e) {
       setHistory(prev => {
@@ -75,8 +71,8 @@ export default function CustomerChat({ customerId }) {
   const handleClearHistory = async () => {
     if (window.confirm(`Are you sure you want to permanently delete this customer's chat history?`)) {
       try {
-        await api.clearInsurerHistory(customerId);
-        setHistory([]); // Clear local state on success
+        await clearHistory(customerId);
+        setHistory([]);
       } catch (err) {
         console.error("Failed to clear history", err);
         alert(`Failed to clear history: ${err.message}`);
@@ -112,7 +108,7 @@ export default function CustomerChat({ customerId }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div className="chat-header">
-        <h3>Customer Query</h3>
+        <h3>Customer Policies Query</h3>
         <button
           className="btn secondary"
           onClick={handleClearHistory}
@@ -131,7 +127,7 @@ export default function CustomerChat({ customerId }) {
               {i === history.length - 1 && m.content === '' && loading ? (
                 <div className="loading-indicator"><span></span><span></span><span></span></div>
               ) : (
-                <MessageFormatter content={m.content} />
+                <MessageFormatter content={m.content} customerId={customerId} />
               )}
             </div>
           </div>

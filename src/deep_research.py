@@ -33,7 +33,7 @@ from tavily import TavilyClient
 tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 
 # Concurrency limit (keep for asyncio)
-CONCURRENCY_LIMIT = int(os.getenv("TAVILY_CONCURRENCY", "2"))
+CONCURRENCY_LIMIT = int(os.getenv("TAVILY_CONCURRENCY", "10"))
 
 
 from .ai.providers import generate_object, trim_prompt, parse_response
@@ -87,7 +87,7 @@ async def generate_serp_queries(
     if learnings:
         learnings_text = f"\n\nHere are some learnings from previous research, use them to generate more specific queries: {chr(10).join(learnings)}"
     
-    prompt = f"Given the following prompt from the user, generate a list of SERP queries to research the topic. Return a maximum of {num_queries} queries, but feel free to return less if the original prompt is clear. Make sure each query is unique and not similar to each other: <prompt>{query}</prompt>{learnings_text}"
+    prompt = f"Given the following prompt from the user, generate a list of SERP queries specifically focused on INSURANCE coverage, claims processes, policy details, and financial implications. Return a maximum of {num_queries} queries, but feel free to return less if the original prompt is clear. Make sure each query is unique and not similar to each other: <prompt>{query}</prompt>{learnings_text}"
     
     schema = {
         "type": "object",
@@ -168,8 +168,25 @@ async def process_serp_result(
     
     contents_text = "\n".join([f"<content>\n{content}\n</content>" for content in contents])
     
+    # prompt = trim_prompt(
+    #     f"Given the following contents from a SERP search for the query <query>{query}</query>, generate a list of learnings from the contents. Return a maximum of {num_learnings} learnings, but feel free to return less if the contents are clear. Make sure each learning is unique and not similar to each other. The learnings should be concise and to the point, as detailed and information dense as possible. Make sure to include any entities like people, places, companies, products, things, etc in the learnings, as well as any exact metrics, numbers, or dates. The learnings will be used to research the topic further.\n\n<contents>{contents_text}</contents>"
+    # )
+
     prompt = trim_prompt(
-        f"Given the following contents from a SERP search for the query <query>{query}</query>, generate a list of learnings from the contents. Return a maximum of {num_learnings} learnings, but feel free to return less if the contents are clear. Make sure each learning is unique and not similar to each other. The learnings should be concise and to the point, as detailed and information dense as possible. Make sure to include any entities like people, places, companies, products, things, etc in the learnings, as well as any exact metrics, numbers, or dates. The learnings will be used to research the topic further.\n\n<contents>{contents_text}</contents>"
+        f"""Given the following contents from a SERP search for the query <query>{query}</query>, extract learnings specifically about INSURANCE and FINANCIAL aspects and generate a list of learnings from the contents. Return a maximum of {num_learnings} learnings, but feel free to return less if the contents are clear. Make sure each learning is unique and not similar to each other. The learnings should be concise and to the point, as detailed and information dense as possible. Make sure to include any entities like people, places, companies, products, things, etc in the learnings, as well as any exact metrics, numbers, or dates. The learnings will be used to research the topic further.
+
+    Focus on:
+    - Policy coverage details (limits, exclusions, waiting periods)
+    - Claims process (documentation, timelines, requirements)
+    - Cost information (premiums, deductibles, co-pays, out-of-pocket maximums)
+    - Rider options and benefits
+    - Alternative insurance products
+    - Financial planning strategies
+    - Specific policy terms and conditions
+
+    Ignore or minimize medical treatment details unless they directly impact insurance coverage.
+
+    <contents>{contents_text}</contents>"""
     )
     
     schema = {
@@ -208,57 +225,123 @@ async def process_serp_result(
         return {"learnings": [], "follow_up_questions": []}
 
 
+# async def write_final_report(
+#     prompt: str,
+#     learnings: List[str],
+#     visited_urls: List[str]
+# ) -> str:
+#     """Write final research report"""
+    
+#     learnings_string = "\n".join([f"<learning>\n{learning}\n</learning>" for learning in learnings])
+    
+#     report_prompt = trim_prompt(f"""
+#     Using the following user prompt and research learnings, write a comprehensive final report on the topic.
+
+#     Requirements:
+#     - Structure the report into sections: Introduction, Background, Analysis, Recommendations, Conclusion.
+#     - Include all relevant insights from the research learnings, synthesizing them rather than listing.
+#     - Provide tables, comparisons, or examples where appropriate.
+#     - Highlight key takeaways and actionable points at the end of each section.
+#     - Make the report professional, easy to read, and suitable for stakeholders.
+#     - Aim for at least 3 pages (around 1500+ words).
+
+#     User Prompt:
+#     <prompt>{prompt}</prompt>
+
+#     Research Learnings:
+#     <learnings>
+#     {learnings_string}
+#     </learnings>
+#     """)
+
+
+    
+#     schema = {
+#         "type": "object",
+#         "properties": {
+#             "report_markdown": {
+#                 "type": "string",
+#                 "description": "Final report on the topic in Markdown"
+#             }
+#         },
+#         "required": ["report_markdown"]
+#     }
+    
+#     try:
+#         response = generate_object(system_prompt(), report_prompt, schema)
+#         result = parse_response(response)
+#         report = result.get("report_markdown", "")
+#         log(f"DEBUG: AI report content: {report[:500]}")  # Add this line to see what the AI returns
+#         # Append sources
+#         urls_section = f"\n\n## Sources\n\n" + "\n".join([f"- {url}" for url in visited_urls])
+#         return report + urls_section
+    
+#     except Exception as e:
+#         log(f"Error writing final report: {e}")
+#         return "Error generating report"
+
+# new way to generate final report using OpenAI only cuz its btr than nvidia model 
+from openai import OpenAI
+import os
+
+client = OpenAI(api_key=os.getenv("OPENAI_KEY"))
+
 async def write_final_report(
     prompt: str,
     learnings: List[str],
     visited_urls: List[str]
 ) -> str:
-    """Write final research report"""
-    
-    learnings_string = "\n".join([f"<learning>\n{learning}\n</learning>" for learning in learnings])
-    
-    report_prompt = trim_prompt(
-    f"""Using the following user prompt and research learnings, write a comprehensive final report on the topic. 
+    """Write final research report using OpenAI GPT model only"""
 
-        Requirements:
-        - Make the report detailed, aiming for at least 3 pages.
-        - Include all relevant insights from the research learnings.
-        - Organize the report with clear headings and subheadings.
-        - Synthesize information rather than just listing learnings.
-        - Include tables, examples, or comparisons where helpful.
-        - Ensure the report is professional, easy to read, and actionable.
+    learnings_string = "\n".join(
+        [f"<learning>\n{learning}\n</learning>" for learning in learnings]
+    )
 
-        User Prompt:
-        <prompt>{prompt}</prompt>
+    report_prompt = trim_prompt(f"""
+    Using the following user prompt and research learnings, write a comprehensive final report on the topic.
 
-        Research Learnings:
-        <learnings>
-        {learnings_string}
-        </learnings>
-        """
+    Requirements:
+    - Structure: Introduction, Insurance Coverage Analysis, Claims Process Guide, Cost Analysis, Financial Recommendations, Conclusion
+    - **Prioritize insurance-specific information:**
+        - Detailed policy coverage and exclusions
+        - Step-by-step claims procedures
+        - Documentation requirements and timelines
+        - Coverage gaps and limitations
+        - Alternative insurance products to consider
+        - Out-of-pocket cost projections
+        - Financial planning strategies
+    - Include tables comparing policy options, coverage limits, and costs
+    - Provide actionable steps for filing claims and optimizing coverage
+    - Keep medical treatment discussion MINIMAL - only mention if directly relevant to insurance coverage
+    - Aim for 1000+ words focused on financial/insurance aspects
+
+
+    User Prompt:
+    <prompt>{prompt}</prompt>
+
+    Research Learnings:
+    <learnings>
+    {learnings_string}
+    </learnings>
+    """)
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",   # or gpt-4.1 for stronger writing
+            messages=[
+                {"role": "system", "content": system_prompt()},
+                {"role": "user", "content": report_prompt},
+            ]
         )
 
-    
-    schema = {
-        "type": "object",
-        "properties": {
-            "report_markdown": {
-                "type": "string",
-                "description": "Final report on the topic in Markdown"
-            }
-        },
-        "required": ["report_markdown"]
-    }
-    
-    try:
-        response = generate_object(system_prompt(), report_prompt, schema)
-        result = parse_response(response)
-        report = result.get("report_markdown", "")
-        log(f"DEBUG: AI report content: {report[:500]}")  # Add this line to see what the AI returns
-        # Append sources
-        urls_section = f"\n\n## Sources\n\n" + "\n".join([f"- {url}" for url in visited_urls])
+        report = response.choices[0].message.content
+
+        urls_section = "\n\n## Sources\n\n" + "\n".join(
+            [f"- {url}" for url in visited_urls]
+        )
+
         return report + urls_section
-    
+
     except Exception as e:
         log(f"Error writing final report: {e}")
         return "Error generating report"
@@ -379,22 +462,23 @@ async def deep_research(
                 search_kwargs = {
                     "query": serp_query.query,
                     "max_results": 5,
-                    "include_domains": [
-                        "www.moh.gov.sg",           # Ministry of Health Singapore
-                        "www.mas.gov.sg",           # Monetary Authority of Singapore
-                        "www.aia.com.sg",           # AIA Singapore
-                        "www.prudential.com.sg",    # Prudential Singapore
-                        "www.income.com.sg",        # NTUC Income
-                        "www.greateasternlife.com", # Great Eastern
-                        "www.policypal.com",        # PolicyPal Singapore
-                    ],
-                    "exclude_domains": [
-                        "www.reddit.com",
-                        "www.quora.com",
-                        "medium.com",
-                        "blogspot.com",
-                        "forums.hardwarezone.com.sg"
-                    ]
+                        "include_domains": [
+                            # Insurance company sites
+                            "www.aia.com.sg",
+                            "www.prudential.com.sg",
+                            "www.income.com.sg",
+                            "www.greateasternlife.com",
+                            "www.policypal.com",
+                            
+                            # Regulatory/government sites
+                            "www.moh.gov.sg",
+                            "www.mas.gov.sg",
+                            "www.cpf.gov.sg",  # Add CPF for MediShield Life info
+                            
+                            # Insurance info sites
+                            # "www.moneysmart.sg",  # Add insurance comparison sites
+                            # "www.seedly.sg",
+                        ],
                 }
 
                 # Add time filter if query implies recency

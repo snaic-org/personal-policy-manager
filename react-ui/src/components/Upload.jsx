@@ -3,7 +3,7 @@ import { uploadPolicies } from '../services/api';
 import FileDropzone from './FileDropzone';
 
 export default function Upload({ onUploadSuccess }) {
-  const [files, setFiles] = useState([]); // <-- This is passed to the dropzone
+  const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -25,12 +25,12 @@ export default function Upload({ onUploadSuccess }) {
     try {
       const res = await uploadPolicies(files);
       setMessage(res.message);
-      onUploadSuccess(); // Notify chat and refresh file list
+      onUploadSuccess();
     } catch (e) {
       setError(e.message);
     } finally {
       setLoading(false);
-      setFiles([]); // <-- This will trigger the dropzone to reset
+      setFiles([]);
     }
   };
 

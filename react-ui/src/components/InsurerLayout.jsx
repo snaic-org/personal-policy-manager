@@ -30,7 +30,7 @@ export default function InsurerLayout({ user }) {
       <main className="chat-main">
         {selectedCustomerId ? (
           <CustomerDashboard 
-            key={selectedCustomerId} // Force re-mount on customer change
+            key={selectedCustomerId}
             customerId={selectedCustomerId} 
           />
         ) : (

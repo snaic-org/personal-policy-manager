@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { getUserFiles, deletePolicies, downloadFile } from '../services/api';
-import FileDisplayList from './FileDisplayList'; // <-- Import the new list component
+import FileDisplayList from './FileDisplayList';
 
 export default function UploadedFiles({ refreshTrigger, onFileChange }) {
   const [files, setFiles] = useState([]);
@@ -36,7 +36,7 @@ export default function UploadedFiles({ refreshTrigger, onFileChange }) {
     setError(null);
     try {
       await deletePolicies(filesToDelete);
-      onFileChange(); // Trigger refresh (which re-runs fetchFiles)
+      onFileChange();
     } catch (err) {
       console.error('Error deleting files:', err);
       setError(err.message);
@@ -54,7 +54,6 @@ export default function UploadedFiles({ refreshTrigger, onFileChange }) {
     }
   };
 
-  // The return is now just the new component!
   return (
     <FileDisplayList
       title="Your Uploaded Files"

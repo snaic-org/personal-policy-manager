@@ -1,4 +1,5 @@
 # run.py integrated with RAG and follow-up questions for UI
+# latest version to use for deep research 
 
 import asyncio
 from typing import List, Dict, Optional
@@ -10,7 +11,8 @@ from .feedback import generate_feedback
 async def run_ui(
     query: str,
     intent: dict,
-    rag_results: List[Dict],
+    profile_info: str,
+    context_from_docs: str,
     followup_answers: Optional[List[str]] = None,
     mode: str = "report"
 ):
@@ -35,8 +37,9 @@ async def run_ui(
 
     # Step 2: Format initial query with RAG
     helper = HelperQuery(max_chunks_per_query=20)
-    formatted_query = helper._format_enhanced_query(query=query, rag_results=rag_results, intent=intent)
+    formatted_query = helper._format_enhanced_query(query=query, profile_info=profile_info, context_from_docs=context_from_docs, intent=intent)
     combined_query = formatted_query
+    # print('Formatted query: ----------------------------- \n', formatted_query)
     yield {"info": f"Formatted query: {formatted_query}"}
 
     # Step 3: Generate follow-up questions
@@ -64,7 +67,7 @@ async def run_ui(
     try:
         yield {"info": "Starting deep research..."}
         print("Starting deep research...")
-        result = await deep_research(query=combined_query, breadth=4, depth=2)
+        result = await deep_research(query=combined_query, breadth=2, depth=2)
         yield {"info": "Deep research completed. Generating report..."}
         print("Deep research completed. Generating report...")
 
