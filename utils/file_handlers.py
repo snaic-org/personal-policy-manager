@@ -1,9 +1,14 @@
+# utils/file_handlers.py
+
 import os
 from pathlib import Path
 from typing import List, Tuple, Dict, Any
 import re
+import json
+
 from docx import Document
 from dotenv import load_dotenv
+
 from .pdf_extractor import extract_pages_with_azure
 
 load_dotenv()
@@ -13,48 +18,62 @@ class FileHandler:
     """Handles processing of various document formats."""
 
     def __init__(self, **kwargs):
-        # --- NEW: Load Azure credentials ---
+        # Load Azure Document Intelligence credentials
         self.azure_endpoint = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT")
         self.azure_key = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_KEY")
 
         if not self.azure_endpoint or not self.azure_key:
-            raise ValueError("Azure credentials not found in .env file")
+            raise ValueError("Azure credentials not found in environment variables")
 
+        # Optionally load OpenAI key here, or inside the LLM method
+        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
     def process_document(
-        self, file_path: str
+        self,
+        file_path: str,
+        enrich_with_llm: bool = False,
     ) -> Tuple[List[str], List[Dict[str, Any]]]:
-        """Process a document and return chunks with metadata."""
+        """
+        Process a document and return:
+        - list of chunk texts
+        - list of corresponding metadata dicts
+
+        If enrich_with_llm is True, each chunk's metadata is augmented with:
+        - llm_summary
+        - llm_key_entities
+        - llm_likely_questions
+        """
         file_path = Path(file_path)
 
         if not file_path.exists():
             print(f"File not found: {file_path}")
             return [], []
 
-        # Extract text based on file type
         try:
-            # --- NEW: This block is now much simpler ---
-            if file_path.suffix.lower() == ".pdf":
-                # Call your new Azure worker function
+            # 1) Extract page-level text for the document
+            suffix = file_path.suffix.lower()
+
+            if suffix == ".pdf":
                 page_texts = extract_pages_with_azure(
                     str(file_path), self.azure_endpoint, self.azure_key
                 )
-            elif file_path.suffix.lower() == ".docx":
+            elif suffix == ".docx":
                 page_texts = self._extract_docx_text(file_path)
-            elif file_path.suffix.lower() in [".txt", ".md"]:
+            elif suffix in {".txt", ".md"}:
                 page_texts = self._extract_text_file(file_path)
             else:
-                print(f"Unsupported file format: {file_path.suffix}")
+                print(f"Unsupported file format: {suffix}")
                 return [], []
-            # --- END NEW BLOCK ---
 
             if not page_texts:
                 print(f"No text extracted from {file_path.name}")
                 return [], []
 
-            # --- START: Insurance-Aware Metadata Logic (This is unchanged) ---
-            # This logic is now applied to the *clean* Azure output
-
-            INSURER_PLAN_KEYWORDS = {
+            # 2) Insurance-aware plan detection based on filename
+            INSURER_PLAN_KEYWORDS: Dict[str, re.Pattern] = {
                 "GREAT_SupremeHealth_Benefits.pdf": re.compile(
                     r"\b(P PLUS|P PRIME|A PLUS|B PLUS|STANDARD|GREAT TotalCare)\b",
                     re.IGNORECASE,
@@ -70,28 +89,22 @@ class FileHandler:
 
             filename = file_path.name
             plan_regex = INSURER_PLAN_KEYWORDS.get(filename)
-            # --- END: Insurance-Aware Metadata Logic ---
 
-            all_chunks = []
-            all_metadata = []
+            all_chunks: List[str] = []
+            all_metadata: List[Dict[str, Any]] = []
 
-            # This loop now iterates over the clean page data from Azure
+            # 3) Iterate over pages and split into sub-chunks
             for page_info in page_texts:
                 page_num = page_info["page_num"]
                 page_content = page_info["text"]
 
-                if not page_content.strip():
+                if not page_content or not page_content.strip():
                     continue
 
-                # Your strategy: one chunk per page
-                chunk = page_content
-
-                # Extract page heading
+                # Derive a page heading from markdown header, table header, or first line
                 heading_match = re.search(
                     r"^\s*(#{1,3})\s*(.+)$", page_content, re.MULTILINE
                 )
-
-                # --- NEW: Use table headers as headings if no markdown header ---
                 table_header_match = re.search(
                     r"^\s*\|(.+)\|", page_content, re.MULTILINE
                 )
@@ -99,67 +112,65 @@ class FileHandler:
                 if heading_match:
                     page_heading = heading_match.group(2).strip()
                 elif table_header_match:
-                    # Use the first table's header as the heading
-                    page_heading = (
-                        table_header_match.group(1).split("|")[0].strip()
-                    )  # Get first column name
+                    page_heading = table_header_match.group(1).split("|")[0].strip()
                 else:
                     first_line = next(
-                        (line for line in page_content.split("\n") if line.strip()),
+                        (line for line in page_content.splitlines() if line.strip()),
                         f"Page {page_num}",
                     )
                     page_heading = first_line.strip()
 
-                # --- START: Smart Metadata Population (This is unchanged) ---
-                found_plans = []
+                # Detect any plan names on this page
+                found_plans: List[str] = []
                 if plan_regex:
-                    found_plans = list(set(plan_regex.findall(page_content)))
+                    raw_matches = plan_regex.findall(page_content)
+                    if raw_matches:
+                        # findall may return tuples if there are groups in the regex
+                        if isinstance(raw_matches[0], tuple):
+                            for t in raw_matches:
+                                found_plans.append(" ".join(x for x in t if x))
+                        else:
+                            found_plans.extend(raw_matches)
+                    # de-duplicate
+                    found_plans = list(dict.fromkeys(found_plans))
 
-                normalized_plans = []
-                for plan in found_plans:
-                    if "p plus" in plan.lower():
-                        normalized_plans.append("P PLUS")
-                    elif "p prime" in plan.lower():
-                        normalized_plans.append("P PRIME")
-                    elif "a plus" in plan.lower():
-                        normalized_plans.append("A PLUS")
-                    elif "b plus" in plan.lower():
-                        normalized_plans.append("B PLUS")
-                    elif "great totalcare" in plan.lower():
-                        normalized_plans.append("GREAT TotalCare")
-                    elif "prestige" in plan.lower():
-                        normalized_plans.append("Prestige")
-                    elif "plus" in plan.lower():
-                        normalized_plans.append("Plus")
-                    elif "lite" in plan.lower():
-                        normalized_plans.append("Lite")
-                    elif "standard" in plan.lower():
-                        normalized_plans.append("STANDARD")
-                    elif "critical care" in plan.lower():
-                        normalized_plans.append("Critical Care Enhancer")
-                    elif "total and permanent disability" in plan.lower():
-                        normalized_plans.append(
-                            "Total and Permanent Disability Plus Rider"
-                        )
-                    else:
-                        normalized_plans.append(plan)
-                # --- END: Smart Metadata Population ---
+                normalized_plans = self._normalize_plans(found_plans)
 
-                all_metadata.append(
-                    {
+                # Split this page into smaller semantic chunks
+                sub_chunks = self._split_page_into_chunks(page_content, page_num)
+
+                for sub in sub_chunks:
+                    chunk_text = sub["chunk_text"]
+                    chunk_index = sub["chunk_index"]
+
+                    if not chunk_text.strip():
+                        continue
+
+                    chunk_id = f"p{page_num}-{chunk_index}"
+
+                    metadata: Dict[str, Any] = {
                         "source": str(file_path),
                         "filename": file_path.name,
                         "page_number": page_num,
                         "page_heading": page_heading,
-                        "plan_context": list(
-                            set(normalized_plans)
-                        ),  # <-- THE ENHANCED METADATA
-                        "chunk_id": f"p{page_num}-0",
-                        "chunk_size": len(chunk),
-                        "file_type": file_path.suffix.lower(),
+                        "plan_context": normalized_plans,
+                        "chunk_id": chunk_id,
+                        "chunk_size": len(chunk_text),
+                        "file_type": suffix,
                     }
-                )
-                all_chunks.append(chunk)
+
+                    # Optional LLM enrichment
+                    if enrich_with_llm:
+                        try:
+                            extra = self._generate_chunk_metadata_llm(chunk_text)
+                            if extra:
+                                metadata.update(extra)
+                        except Exception as e:
+                            # Don't blow up ingestion if enrichment fails
+                            print(f"[WARN] LLM enrichment failed for {chunk_id}: {e}")
+
+                    all_chunks.append(chunk_text)
+                    all_metadata.append(metadata)
 
             return all_chunks, all_metadata
 
@@ -170,53 +181,251 @@ class FileHandler:
             traceback.print_exc()
             return [], []
 
-    # --- We no longer need the old PDF extractors ---
-    # def _extract_pdf_text_pymupdf4llm(self, file_path: Path) -> List[Dict]: ...
-    # def _extract_pdf_text_fallback(self, file_path: Path) -> List[Dict]: ...
-    # (You can delete them)
-
-    def _extract_docx_text(self, file_path: Path) -> List[Dict]:
-        """Extract text from DOCX file."""
-        page_texts = []
+    # ------------------------------------------------------------------
+    # Extraction helpers
+    # ------------------------------------------------------------------
+    def _extract_docx_text(self, file_path: Path) -> List[Dict[str, Any]]:
+        """Extract text from a DOCX file as a single 'page'."""
+        page_texts: List[Dict[str, Any]] = []
         try:
             doc = Document(file_path)
-            full_text = ""
+            full_text_lines: List[str] = []
             for paragraph in doc.paragraphs:
-                full_text += paragraph.text + "\n"
+                full_text_lines.append(paragraph.text)
+            full_text = "\n".join(full_text_lines)
             page_texts.append({"page_num": 1, "text": self._clean_text(full_text)})
             return page_texts
         except Exception as e:
             print(f"Error reading DOCX {file_path.name}: {e}")
             return []
 
-    def _extract_text_file(self, file_path: Path) -> List[Dict]:
-        """Extract text from TXT or MD file."""
-        page_texts = []
+    def _extract_text_file(self, file_path: Path) -> List[Dict[str, Any]]:
+        """Extract text from a TXT or MD file as a single 'page'."""
+        page_texts: List[Dict[str, Any]] = []
         try:
-            with open(file_path, "r", encoding="utf-8") as file:
-                text = file.read()
+            with open(file_path, "r", encoding="utf-8") as f:
+                text = f.read()
             page_texts.append({"page_num": 1, "text": self._clean_text(text)})
             return page_texts
         except Exception as e:
             print(f"Error reading text file {file_path.name}: {e}")
             return []
 
+    # ------------------------------------------------------------------
+    # Text cleaning
+    # ------------------------------------------------------------------
     def _clean_text(self, text: str) -> str:
         """Clean and normalize text."""
+        # Collapse excessive blank lines
         text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
-        text = re.sub(r" +", " ", text)
-        text = re.sub(r"\t+", " ", text)
+        # Normalize spaces and tabs
+        text = re.sub(r"[ \t]+", " ", text)
+        # Remove repeated markdown emphasis artifacts
         text = re.sub(r"\*\*\s*\*\*", "", text)
         text = re.sub(r"_{2,}", "", text)
+        # Strip common email signatures (for non-PDF sources that might be emails)
         text = self._remove_email_signature(text)
         return text.strip()
 
     def _remove_email_signature(self, text: str) -> str:
-        """Remove common email signature closings"""
+        """Remove simple email signature closings if present."""
         signature_regex = re.compile(
-            r"(?m)(?:\n|\A)\s*(?:Best regards,|Best Regards,|Regards,|Sincerely,|Kind regards,|Kind Regards,|Yours sincerely,|Yours faithfully,|Thanks,|Thank you,|Thank you for your time,?)\s*(?:\n[^\n]{0,120})?(?:\n[^\n]{0,120})?\s*\Z",
+            r"(?m)(?:\n|\A)\s*"
+            r"(?:Best regards,|Best Regards,|Regards,|Sincerely,|Thank you,|Thanks,)"
+            r"\s*(?:\n.*){0,3}$",
             flags=re.IGNORECASE,
         )
         new_text = signature_regex.sub("\n", text)
+        # Remove placeholder names
         new_text = re.sub(r"(?m)^\s*\[?Your Name\]?\s*$", "\n", new_text)
         return new_text.rstrip()
+
+    # ------------------------------------------------------------------
+    # Chunking
+    # ------------------------------------------------------------------
+    def _split_page_into_chunks(
+        self,
+        page_content: str,
+        page_num: int,
+        max_chars: int = 1200,
+        overlap_chars: int = 200,
+    ) -> List[Dict[str, Any]]:
+        """
+        Split a page into multiple smaller chunks based on paragraphs
+        and a sliding window over characters.
+
+        Returns a list of dicts:
+            [{"chunk_text": str, "chunk_index": int}, ...]
+        """
+        # Normalize line breaks
+        text = page_content.replace("\r\n", "\n").replace("\r", "\n")
+
+        # Split into paragraphs using double newlines as separators
+        raw_paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+
+        # If no paragraphs, treat whole page as one chunk
+        if not raw_paragraphs:
+            return [{"chunk_text": page_content.strip(), "chunk_index": 0}]
+
+        chunks: List[Dict[str, Any]] = []
+        current = ""
+        chunk_index = 0
+
+        for para in raw_paragraphs:
+            # Always ensure paragraphs are separated
+            candidate = (current + "\n\n" + para).strip() if current else para
+
+            if len(candidate) <= max_chars:
+                current = candidate
+                continue
+
+            # If adding this paragraph would exceed max_chars, flush current chunk
+            if current:
+                chunks.append(
+                    {"chunk_text": current.strip(), "chunk_index": chunk_index}
+                )
+                chunk_index += 1
+
+                # Start new chunk with some overlap from the end of the previous chunk
+                if len(current) > overlap_chars:
+                    overlap = current[-overlap_chars:]
+                    current = (overlap + "\n\n" + para).strip()
+                else:
+                    current = para
+            else:
+                # Single paragraph longer than max_chars: hard-cut into pieces
+                remaining = para
+                while len(remaining) > max_chars:
+                    piece = remaining[:max_chars]
+                    chunks.append(
+                        {
+                            "chunk_text": piece.strip(),
+                            "chunk_index": chunk_index,
+                        }
+                    )
+                    chunk_index += 1
+                    remaining = remaining[max_chars:]
+                current = remaining
+
+        # Flush any remaining text as the last chunk
+        if current and current.strip():
+            chunks.append({"chunk_text": current.strip(), "chunk_index": chunk_index})
+
+        if not chunks:
+            return [{"chunk_text": page_content.strip(), "chunk_index": 0}]
+
+        return chunks
+
+    # ------------------------------------------------------------------
+    # Plan normalization
+    # ------------------------------------------------------------------
+    def _normalize_plans(self, found_plans: List[str]) -> List[str]:
+        """Normalise raw plan strings into canonical labels."""
+        PLAN_NORMALIZATION_RULES = [
+            (re.compile(r"\bp plus\b", re.IGNORECASE), "P PLUS"),
+            (re.compile(r"\bp prime\b", re.IGNORECASE), "P PRIME"),
+            (re.compile(r"\ba plus\b", re.IGNORECASE), "A PLUS"),
+            (re.compile(r"\bb plus\b", re.IGNORECASE), "B PLUS"),
+            (re.compile(r"\bgreat totalcare\b", re.IGNORECASE), "GREAT TotalCare"),
+            (re.compile(r"\bprestige\b", re.IGNORECASE), "Prestige"),
+            (re.compile(r"\blite\b", re.IGNORECASE), "Lite"),
+            (re.compile(r"\bstandard\b", re.IGNORECASE), "STANDARD"),
+            (re.compile(r"critical care", re.IGNORECASE), "Critical Care Enhancer"),
+            (
+                re.compile(r"total and permanent disability", re.IGNORECASE),
+                "Total and Permanent Disability Plus Rider",
+            ),
+        ]
+
+        normalised: List[str] = []
+
+        for raw in found_plans:
+            text = raw.strip()
+            if not text:
+                continue
+
+            lowered = text.lower()
+            matched = False
+            for pattern, canonical in PLAN_NORMALIZATION_RULES:
+                if pattern.search(lowered):
+                    normalised.append(canonical)
+                    matched = True
+                    break
+
+            if not matched:
+                normalised.append(text)
+
+        # De-duplicate while preserving order
+        seen = set()
+        deduped: List[str] = []
+        for p in normalised:
+            if p not in seen:
+                seen.add(p)
+                deduped.append(p)
+
+        return deduped
+
+    # ------------------------------------------------------------------
+    # LLM enrichment
+    # ------------------------------------------------------------------
+    def _generate_chunk_metadata_llm(self, chunk_text: str) -> Dict[str, Any]:
+        """
+        Call a lighter LLM to get:
+        - llm_summary: str
+        - llm_key_entities: List[str]
+        - llm_likely_questions: List[str]
+
+        Returns a dict suitable for merging into the chunk metadata.
+        """
+        if not self.openai_api_key:
+            raise RuntimeError("OPENAI_API_KEY not set in environment")
+
+        # Local import so this module can be used without OpenAI installed (if needed)
+        from openai import OpenAI
+
+        client = OpenAI(api_key=self.openai_api_key)
+
+        system_prompt = (
+            "You are helping index an insurance policy document for a RAG system. "
+            "Given a chunk of text, extract a concise summary, key entities, and "
+            "1-3 natural-language questions this chunk can help answer. "
+            "Respond as valid JSON with keys: summary, key_entities, likely_questions. "
+            "key_entities should be a list of short strings. "
+            "likely_questions should be a list of short user-style questions."
+        )
+
+        user_prompt = f"Chunk:\n\n{chunk_text}"
+
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",  # choose a small, cheap model
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={"type": "json_object"},
+        )
+
+        try:
+            data = json.loads(response.choices[0].message.content)
+        except Exception as e:
+            raise RuntimeError(f"Failed to parse LLM metadata JSON: {e}")
+
+        summary = (data.get("summary") or "").strip()
+        key_entities = data.get("key_entities") or []
+        likely_questions = data.get("likely_questions") or []
+
+        # Normalise list fields
+        if isinstance(key_entities, str):
+            key_entities = [key_entities]
+        if isinstance(likely_questions, str):
+            likely_questions = [likely_questions]
+
+        return {
+            "llm_summary": summary,
+            "llm_key_entities": [
+                str(x).strip() for x in key_entities if str(x).strip()
+            ],
+            "llm_likely_questions": [
+                str(x).strip() for x in likely_questions if str(x).strip()
+            ],
+        }
