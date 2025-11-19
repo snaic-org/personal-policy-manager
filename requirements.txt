@@ -43,6 +43,9 @@ datasets>=4.4.1
 # RAG evaluation and integration libraries
 ragas>=0.3.9
 langchain-openai>=1.0.3
+# Cross-Encoder reranking and optimization
+sentence-transformers>=2.2.0
+scipy>=1.9.0
 lxml==6.0.2
 MarkupSafe==3.0.3
 msrest==0.7.1

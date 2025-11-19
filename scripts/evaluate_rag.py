@@ -96,6 +96,7 @@ async def evaluate_dataset(
     evaluator_model: str = "gpt-4o-mini",
     provider: str = "openai",
     profile_path: Optional[str] = None,
+    pipeline: str = "baseline",
 ):
     # Load dataset
     dataset_file = Path(dataset_path)
@@ -150,13 +151,13 @@ async def evaluate_dataset(
     metric_suite = [faith, ctx_prec, ctx_recall, ans_rel, sem_sim, ctx_util]
 
     # Timeouts (seconds) for async operations to avoid indefinite hangs
-    METRIC_TIMEOUT = int(os.getenv("METRIC_TIMEOUT", "60"))
+    METRIC_TIMEOUT = int(os.getenv("METRIC_TIMEOUT", "180"))  # Increased to 180s for LLM calls
 
     # RunConfig lets ragas handle retries/parallelism, matching docs guidance
     ragas_timeout = int(os.getenv("RAGAS_TIMEOUT", str(METRIC_TIMEOUT)))
     ragas_max_workers = int(os.getenv("RAGAS_MAX_WORKERS", os.getenv("EVAL_CONCURRENCY", "5")))
     ragas_max_retries = int(os.getenv("RAGAS_MAX_RETRIES", "3"))
-    ragas_max_wait = int(os.getenv("RAGAS_MAX_WAIT", "60"))
+    ragas_max_wait = int(os.getenv("RAGAS_MAX_WAIT", "120"))  # Increased to 120s
     ragas_seed = int(os.getenv("RAGAS_SEED", "42"))
 
     run_config = RunConfig(
@@ -166,9 +167,19 @@ async def evaluate_dataset(
         max_workers=ragas_max_workers,
         seed=ragas_seed,
     )
-    # Start QueryProcessor
+    # Start QueryProcessor with selected pipeline
     bm = BatchManager()
-    qp = QueryProcessor(bm)
+    
+    # Dynamic pipeline selection
+    if pipeline == "optimized":
+        print("[INFO] Using OPTIMIZED pipeline (RRF + Cross-Encoder)")
+        from query_processor_optimized import OptimizedQueryProcessor
+        qp = OptimizedQueryProcessor(bm)
+        print(f"[INFO] Optimized pipeline config: {qp.get_pipeline_info()}")
+    else:
+        print("[INFO] Using BASELINE pipeline (Weighted Sum + Heuristic Reranking)")
+        from query_processor import QueryProcessor
+        qp = QueryProcessor(bm)
 
     # Optionally load a user profile to evaluate personal batches (only if
     # a profile path was explicitly provided via the CLI). We no longer
@@ -219,6 +230,9 @@ async def evaluate_dataset(
             except asyncio.TimeoutError:
                 print(f"[ERROR] run_retrieval timed out after {METRIC_TIMEOUT}s for sample {idx}")
                 search_results = []
+            except asyncio.CancelledError:
+                print(f"[WARN] run_retrieval was cancelled for sample {idx}")
+                raise  # Re-raise to propagate cancellation
             except Exception as e:
                 print(f"Error during retrieval for sample {idx}: {e}")
                 search_results = []
@@ -241,6 +255,9 @@ async def evaluate_dataset(
             except asyncio.TimeoutError:
                 print(f"[ERROR] run_generation timed out after {METRIC_TIMEOUT}s for sample {idx}")
                 response_text = ""
+            except asyncio.CancelledError:
+                print(f"[WARN] run_generation was cancelled for sample {idx}")
+                raise  # Re-raise to propagate cancellation
             except Exception as e:
                 print(f"Error during generation for sample {idx}: {e}")
                 response_text = ""
@@ -252,6 +269,7 @@ async def evaluate_dataset(
                 "response": response_text,
                 "retrieved_count": len(retrieved_texts),
                 "top_k": top_k,
+                "pipeline": pipeline,  # Track which pipeline was used
                 "retrieved_contexts": json.dumps(retrieved_texts, ensure_ascii=False),
             }
             ragas_sample = SingleTurnSample(
@@ -334,6 +352,7 @@ def main():
     parser.add_argument("--evaluator-model", default="gpt-4o-mini", help="LLM model for evaluation (llm_factory) - e.g. gpt-4o-mini")
     parser.add_argument("--provider", default="openai", help="LLM provider for ragas llm_factory (openai, oci, haystack, etc.)")
     parser.add_argument("--profile", default=None, help="Optional path to a user profile JSON. If omitted, evaluation will not use a user profile.")
+    parser.add_argument("--pipeline", choices=["baseline", "optimized"], default="baseline", help="Pipeline to use: 'baseline' (weighted sum + heuristics) or 'optimized' (RRF + cross-encoder)")
 
     args = parser.parse_args()
 
@@ -346,6 +365,7 @@ def main():
             args.evaluator_model,
             args.provider,
             profile_path=args.profile,
+            pipeline=args.pipeline,
         )
     )
 
