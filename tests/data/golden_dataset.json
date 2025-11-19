@@ -1,0 +1,26 @@
+[
+  {
+    "question": "I have been diagnosed with End Stage Kidney Failure and need a transplant. My doctor says this is a long-term side effect of the chemotherapy I received for my cancer when I was 10. Am I covered for the transplant?",
+    "ground_truth": "The coverage is split. Manulife 'Critical Care Enhancer Rider (II)' excludes this claim because the kidney failure is a result of a pre-existing condition (cancer at age 10) which is explicitly excluded (Page 15). However, 'GREAT SupremeHealth P PLUS' covers 'Organ Transplant' benefits (Page 4), though this is subject to its own pre-existing condition clauses which might still exclude it if the condition was not disclosed."
+  },
+  {
+    "question": "I was in a small accident and went to a private hospital. I was diagnosed with \"Major Burns\" and also required \"Accidental Dental Treatment.\"",
+    "ground_truth": "Yes, you are covered by both policies in two separate ways:\n\nLump Sum Payout (Manulife): Your Manulife 'Critical Care Enhancer Rider (II)' provides a lump sum payout of $500,000 for \"Major Burns,\" as it is one of the 36 listed critical illnesses covered under this rider. This payment is made directly to you and is separate from your hospital bill.\n\nHospital Bill Coverage (GREAT SupremeHealth): Your 'GREAT SupremeHealth P PLUS' plan covers your bill from a private hospital. It explicitly covers \"Accidental Dental Treatment\" and the general costs for the burns treatment (like ward stay and surgery) \"As Charged\". You would be responsible for your $3,500 deductible and 10% co-insurance on the remaining bill after the deductible."
+  },
+  {
+    "question": "I was on a trip to the US, and my flight was delayed by 7 hours due to a technical issue. Can it be claimed?",
+    "ground_truth": "Yes. Your 'GREAT TravelCare' Platinum plan has a \"Travel delay while overseas\" benefit. This benefit provides a cash payout of \"S$100 for every 4 hours\" of delay, up to a S$2,000 maximum. Since your 7-hour delay exceeds the 4-hour minimum threshold, you are eligible to claim S$100 (for the first 4-hour period). If the delay had been 8 hours or more, you would receive S$200."
+  },
+  {
+    "question": "I was diagnosed with cancer at age 10. My ManuProtect plan was issued when I was 22. Am I covered if I get cancer again?",
+    "ground_truth": "No. Your Manulife 'Critical Care Enhancer Rider (II)' excludes coverage for cancer recurrence because it is a pre-existing condition (Page 15). Additionally, if the diagnosis occurs within the 90-day waiting period from the issue date, it is also excluded (Page 19)."
+  },
+  {
+    "question": "Considering my current policy and age, which combination of insurance plans would provide lifetime coverage for cancer, including recurrence and metastatic treatments?",
+    "ground_truth": "Your 'GREAT SupremeHealth P PLUS' plan is your policy for lifetime coverage for cancer treatment costs. It has an \"Unlimited\" Lifetime Benefit Limit and covers hospitalization and related expenses, including \"Outpatient Cancer Drug Treatment\" for both \"one primary cancer\" (5x MediShield Life limit per month) and \"Multiple Primary Cancers\" (sum of highest limits among claimable treatments).\n\nHowever, there is a critical limitation: Coverage for a recurrence of your undisclosed childhood cancer (from question AUTO_016) would still be excluded due to the pre-existing condition clause. The GREAT SupremeHealth plan would only cover a new, unrelated cancer that develops in the future.\n\nYour 'ManuProtect Term (II)' is not a lifetime plan; it is a 10-year term policy that expires in 2033, and the Critical Care Enhancer Rider also excludes pre-existing cancer."
+  },
+  {
+    "question": "Does my GREAT SupremeHealth P Plus plan cover overseas outpatient treatment in Japan, and what are the limits and exclusions? if not what insurance should i get?",
+    "ground_truth": "Your 'GREAT SupremeHealth P PLUS' plan covers 'Emergency Medical Treatment outside Singapore' subject to deductibles (Page 6), but does not cover general outpatient treatment. For comprehensive overseas coverage, your 'GREAT TravelCare' Platinum plan covers medical expenses and travel inconveniences (Page 4)."
+  }
+]

@@ -15,6 +15,7 @@ from typing import List, Dict, Any, Optional
 import re
 
 from openai import OpenAI
+from openai import AsyncOpenAI
 
 from batch_manager import BatchManager
 from utils.search import HybridSearchEngine
@@ -30,6 +31,174 @@ class QueryProcessor:
         self.current_batch_id = None
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         self.deep_research_enabled = config.DEEP_RESEARCH_ENABLED
+
+    async def run_retrieval(
+        self,
+        query: str,
+        batch_id: str,
+        user_profile: Optional[Dict] = None,
+        top_k: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """
+        Async method to run retrieval pipeline.
+
+        Args:
+            query: User query
+            batch_id: Batch ID to search within
+            user_profile: Optional user profile for personalization
+            top_k: Number of top results to return
+
+        Returns:
+            List of retrieved documents with metadata
+        """
+        # The underlying search and expansion code is synchronous (uses
+        # blocking OpenAI client and local FAISS/BM25 calls). To avoid
+        # blocking the asyncio event loop, run the synchronous retrieval
+        # pipeline in a thread executor.
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._run_retrieval_sync, query, batch_id, user_profile, top_k
+        )
+
+    def _run_retrieval_sync(
+        self, query: str, batch_id: str, user_profile: Optional[Dict] = None, top_k: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Synchronous retrieval pipeline (intended to be run in a thread).
+
+        This mirrors the previous implementation of run_retrieval but stays
+        synchronous so it can safely call blocking libraries (OpenAI sync
+        client, FAISS, BM25) without hanging the event loop.
+        """
+        target_batch = batch_id or self.batch_manager.get_default_batch()
+        if not target_batch:
+            raise ValueError("No batch specified and no default batch set.")
+
+        if not self._ensure_batch_loaded(target_batch):
+            raise RuntimeError(f"Failed to load batch '{target_batch}'.")
+
+        expanded_query = self._expand_query(query)
+        is_personal_batch = target_batch.startswith("user_")
+
+        # Use a larger pool for retrieval to allow reranker to work effectively
+        # We want to retrieve enough candidates (e.g. 60) and then rerank/filter down to top_k
+        search_pool_size = max(top_k, config.SEARCH_TOP_K)
+
+        if is_personal_batch and user_profile:
+            # For multi-policy, we want to ensure we get enough chunks per policy
+            num_policies = len(user_profile.get("insurance_policies", {}) or {"default": None})
+            # Ensure at least 10 chunks per policy to give reranker enough material
+            chunks_per_policy = max(search_pool_size // max(num_policies, 1), 10)
+            
+            raw_results = self._multi_policy_search(
+                query=query,
+                expanded_query=expanded_query,
+                user_profile=user_profile,
+                chunks_per_policy=chunks_per_policy,
+            )
+        else:
+            raw_results = self.search_engine.hybrid_search(
+                query=expanded_query, top_k=search_pool_size
+            )
+
+        unique_results = self._deduplicate_results(raw_results)
+        reranked_results = self._rerank_insurance_results(
+            query, unique_results, max_results=top_k
+        )
+
+        return reranked_results
+
+    async def run_generation(
+        self,
+        query: str,
+        search_results: List[Dict],
+        is_personal_batch: bool = False,
+        user_profile: Optional[Dict] = None,
+    ) -> str:
+        """
+        Async method to run generation pipeline.
+
+        Args:
+            query: Original user query
+            search_results: Retrieved search results
+            is_personal_batch: Whether this is a personal batch
+            user_profile: Optional user profile
+
+        Returns:
+            Generated response string
+        """
+        if not search_results:
+            return "I couldn't find any relevant information to answer your question."
+
+        context_parts = []
+        for i, result in enumerate(search_results, 1):
+            content = result.get("content", "").strip()
+            metadata = result.get("metadata", {})
+
+            if content:
+                filename = metadata.get("filename", "Unknown Document")
+                page = metadata.get("page_number", "N/A")
+                heading = metadata.get("page_heading", "General Information")
+
+                source_ref = f"[Source {i}: {filename}, Page {page}]"
+                context_parts.append(
+                    f"{source_ref}\nPAGE HEADING: {heading}\n\n{content}"
+                )
+
+        if not context_parts:
+            return "Error: Found documents but failed to extract content."
+
+        context_from_docs = "\n\n---\n\n".join(context_parts)
+
+        if is_personal_batch and user_profile:
+            user_name = user_profile.get("name", "User")
+            insurance_policies = user_profile.get("insurance_policies", {})
+
+            profile_info = f"\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n"
+            profile_info += f"- User Name: {user_name}\n"
+
+            if insurance_policies:
+                profile_info += f"- User's Policies:\n"
+                for filename, policy_data in insurance_policies.items():
+                    plan = policy_data.get("plan_name", "Unknown Plan")
+                    tier = policy_data.get("tier", "N/A")
+                    profile_info += f"  - Policy: {plan} (Tier: {tier})\n"
+        else:
+            user_name = "User"
+            profile_info = "\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n- No user profile provided.\n"
+
+        salutation = f"Hi {user_name.split()[0] if user_name != 'User' else 'Hi'},"
+
+        prompt_instructions = config.INSURANCE_SYSTEM_PROMPT.format(
+            profile_info=profile_info,
+            context_from_docs=context_from_docs,
+            salutation=salutation,
+            original_query=query,
+        )
+
+        try:
+            # Use the async OpenAI client for non-streaming generation inside
+            # an async method (avoids blocking the event loop in evaluation).
+            async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+            response = await async_client.chat.completions.create(
+                model=config.RESPONSE_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert financial advisor. Answer insurance questions using provided documents. Be concise and accurate.",
+                    },
+                    {"role": "user", "content": prompt_instructions},
+                ],
+                max_tokens=config.RESPONSE_MAX_TOKENS,
+                temperature=config.RESPONSE_TEMPERATURE,
+            )
+
+            # Workaround for object wrappers in openai client
+            return response.choices[0].message.content
+
+        except Exception as e:
+            print(f"Error during generation: {e}")
+            raise
 
     def _ensure_batch_loaded(self, batch_id: str) -> bool:
         """Ensure the specified batch is loaded in the search engine."""
@@ -132,25 +301,26 @@ class QueryProcessor:
             content = (res.get("content") or "").lower()
             plan_context = meta.get("plan_context") or []
 
-            score = res.get("score", 0) or 0
+            # Use combined_score from hybrid search as the base, falling back to score
+            score = res.get("combined_score") or res.get("score", 0) or 0
             # Preserve some original ordering
             score -= idx * 0.001
 
             if wants_ci and any(
                 "critical care enhancer" in pc.lower() for pc in plan_context
             ):
-                score += 5
+                score += 0.5
             if wants_health and any(
                 "supremehealth" in pc.lower() for pc in plan_context
             ):
-                score += 3
+                score += 0.3
 
             if "sum insured" in content or "$" in content or "benefit" in content:
-                score += 2.5  # heavier weight to surface payout amounts
+                score += 0.1  # slight boost for amount-bearing chunks
             if "deductible" in content or "co-insurance" in content:
-                score += 1.0
+                score += 0.1
             if "major cancer" in content or "critical illness" in content:
-                score += 1.5
+                score += 0.1
 
             # Track best CI chunk with explicit amount words
             if wants_ci and (
@@ -333,7 +503,7 @@ class QueryProcessor:
                 print(f"  → Manulife chunk details:")
                 for i, result in enumerate(policy_results[:15], 1):
                     metadata = result.get("metadata", {})
-                    page = metadata.get("page_number", "?")
+                    page = metadata.get("page_number", "N/A")
                     score = result.get("combined_score", 0)
                     content_preview = result.get("content", "")[:60].replace("\n", " ")
                     has_dollar = "$" in result.get("content", "")
@@ -572,22 +742,23 @@ class QueryProcessor:
             intent = intent_analyzer.analyze(query)
             print(f"Intent analysis: {intent}")
 
-            expanded_query = self._expand_query(query)
-
+            # Use the new adapter-style retrieval method (async) from a
+            # synchronous context so the streaming UI remains unchanged.
             is_personal_batch = target_batch.startswith("user_")
 
-            # Use multi-policy search for personal batches with user profiles
-            if is_personal_batch and user_profile:
-                raw_search_results = self._multi_policy_search(
-                    query=query,
-                    expanded_query=expanded_query,
-                    user_profile=user_profile,
-                    chunks_per_policy=10,  # 10 chunks per policy
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                raw_search_results = loop.run_until_complete(
+                    self.run_retrieval(
+                        query=query,
+                        batch_id=target_batch,
+                        user_profile=user_profile,
+                        top_k=config.SEARCH_TOP_K,
+                    )
                 )
-            else:
-                raw_search_results = self.search_engine.hybrid_search(
-                    query=expanded_query, top_k=config.SEARCH_TOP_K
-                )
+            finally:
+                loop.close()
 
             print(
                 f"Retrieved {len(raw_search_results)} raw results from hybrid search."

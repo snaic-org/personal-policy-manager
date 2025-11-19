@@ -81,14 +81,48 @@ class BatchManager:
         registry = self._load_registry()
         info = registry.get("batches", {}).get(batch_id)
 
-        if info and 'chunk_count' not in info:
-            try:
-                with open(self.batches_dir / batch_id / "metadata.json", 'r') as f:
-                    meta = json.load(f)
-                    info['chunk_count'] = meta.get("statistics", {}).get("total_chunks", 0)
-            except FileNotFoundError:
-                info['chunk_count'] = 0 # Default to 0
-        return info
+        # If present in registry, ensure chunk_count is populated and return
+        if info:
+            if 'chunk_count' not in info:
+                try:
+                    with open(self.batches_dir / batch_id / "metadata.json", 'r', encoding='utf-8') as f:
+                        meta = json.load(f)
+                        info['chunk_count'] = meta.get("statistics", {}).get("total_chunks", 0)
+                except FileNotFoundError:
+                    info['chunk_count'] = 0  # Default to 0
+
+            return info
+
+        # Fallback: if batch not in registry, but exists on filesystem, construct info
+        batch_dir = self.batches_dir / batch_id
+        if batch_dir.exists():
+            meta_file = batch_dir / "metadata.json"
+            if meta_file.exists():
+                try:
+                    with open(meta_file, 'r', encoding='utf-8') as f:
+                        meta = json.load(f)
+
+                    info_from_fs = {
+                        "id": batch_id,
+                        "name": meta.get("name", batch_id),
+                        "description": meta.get("description", ""),
+                        "doc_count": len(meta.get("documents", [])),
+                        "chunk_count": meta.get("statistics", {}).get("total_chunks", 0),
+                        "created_at": meta.get("created_at", datetime.now().isoformat()),
+                        "faiss_path": str(batch_dir / "faiss_index"),
+                        "bm25_path": str(batch_dir / "bm25_index.pkl"),
+                        "metadata_path": str(meta_file),
+                    }
+
+                    # Persist this to registry for future calls
+                    registry.setdefault("batches", {})[batch_id] = info_from_fs
+                    self._save_registry(registry)
+
+                    return info_from_fs
+                except Exception as e:
+                    print(f"Error loading batch metadata from filesystem: {e}")
+
+        return None
 
     def switch_batch(self, batch_id: str) -> bool:
         """Switch to a specific batch."""

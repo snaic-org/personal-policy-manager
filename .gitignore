@@ -323,3 +323,5 @@ node_modules/
 
 # Personal Info
 user_profile.json
+.venv_eval
+evaluation/results
