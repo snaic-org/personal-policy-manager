@@ -20,62 +20,108 @@ class ResponseAnalyzer:
         Returns True if good, False if needs deep research.
         """
         
-        # Quick checks first (before calling API)
+        # Quick checks first
         if not response or len(response.strip()) < 50:
             print("📊 Quality Check: ❌ Response too short")
             return False
         
-        # Check for common "I don't know" phrases
+        # ===== EXPANDED: More comprehensive checks =====
+        
+        # 1. Explicit "don't know" phrases
         dont_know_phrases = [
             "i couldn't find",
             "no relevant information",
             "i don't have information",
             "unable to find",
             "not available in",
-            "couldn't locate"
+            "couldn't locate",
+            "amount not found",  # ← You have this in your responses!
+            "were not found in the provided documents"  # ← And this!
         ]
         
         response_lower = response.lower()
         if any(phrase in response_lower for phrase in dont_know_phrases):
-            print("📊 Quality Check: ❌ Contains 'don't know' phrase")
+            print(f"📊 Quality Check: ❌ Contains 'don't know' phrase")
             return False
         
+        # 2. Deflecting phrases (NEW!)
+        deflecting_phrases = [
+            "would require details",
+            "you should evaluate",
+            "you should consider",
+            "it's advisable to review",
+            "you may want to refer",
+            "you may want to contact",
+            "consult with an insurance advisor",
+            "contact your insurance provider",
+            "for more details, please",
+            "ultimately, the decision should be based on",
+            "considerations for",
+            "factors to consider"
+        ]
+        
+        if any(phrase in response_lower for phrase in deflecting_phrases):
+            print(f"📊 Quality Check: ❌ Deflecting - not answering directly")
+            return False
+        
+        # 3. Vague comparison language (NEW!)
+        vague_comparison_phrases = [
+            "typically aligns with",
+            "generally similar to",
+            "comparable to industry standards",
+            "typical offerings",
+            "industry standard often includes",
+            "similar to what's available"
+        ]
+        
+        # Only check if query is asking for comparison
+        is_comparison_query = any(word in query.lower() for word in ['compare', 'comparison', 'versus', 'vs', 'better than', 'switch'])
+        
+        if is_comparison_query and any(phrase in response_lower for phrase in vague_comparison_phrases):
+            print(f"📊 Quality Check: ❌ Vague comparison without data")
+            return False
+        
+        # 4. Check for citations (important!)
+        import re
+        has_source_citation = bool(re.search(r'\[Source \d+:', response))
+        has_profile_citation = '<USER PROFILE>' in response
+        
+        # For factual questions, we need citations
+        is_factual_query = any(word in query.lower() for word in ['how much', 'what is', 'do i have', 'am i covered', 'does my'])
+        
+        if is_factual_query and not (has_source_citation or has_profile_citation):
+            print("📊 Quality Check: ❌ Factual query but missing citations")
+            return False
+        
+        # ===== END EXPANDED CHECKS =====
+        
         # Now use LLM for deeper analysis
-        analysis_prompt = f"""You are a quality checker for insurance chatbot responses.
+        analysis_prompt = f"""You are a strict quality checker for insurance chatbot responses.
 
     USER QUESTION: {query}
 
     BOT RESPONSE: {response}
 
-    USER'S POLICIES: {json.dumps(user_profile.get("insurance_policies", {}) if user_profile else {}, indent=2)}
+    Check if the response ACTUALLY ANSWERS the question with SPECIFIC information:
 
-    Analyze if the response:
-    1. **Directly answers** the user's specific question
-    2. **Provides concrete details** (dollar amounts, percentages, policy names)
-    3. **Uses information** from the user's actual policies
-    4. **Doesn't deflect** with vague statements like "may be covered" or "it depends"
-    5. **Is complete** - user wouldn't need to ask a follow-up to get the core answer
+    ❌ BAD Examples:
+    - "You should evaluate if X offers better coverage..." (deflecting)
+    - "Typically aligns with industry standards" (vague, no data)
+    - "Would require details of their current offerings" (admitting ignorance)
+    - "Considerations for switching: Compare coverage..." (generic advice, not specific answer)
+    - "For more details, contact your provider" (deflecting)
 
-    Respond with ONLY ONE WORD:
-    - "GOOD" if the response adequately answers the question
-    - "BAD" if it's insufficient and needs deep research
+    ✅ GOOD Examples:
+    - "Your deductible is $3,500 [Source 1]"
+    - "AIA HealthShield Gold Max has a $3,000 deductible vs your $3,500" (actual comparison)
+    - "Industry average CI coverage is $250k, yours is $500k, which is above average" (specific data)
 
-    Examples of GOOD responses:
-    - "Your deductible is $3,500 [Source 1: ...]"
-    - "You are NOT covered due to exclusion: [specific exclusion]"
-    - "You'll receive $500,000 lump sum [Source 2: ...]"
-
-    Examples of BAD responses:
-    - "You may have coverage depending on your policy"
-    - "I couldn't find specific information about..."
-    - "Your policy should cover this" (no specifics)
-    - "Please check with your insurer" (deflecting)
-
-    ONE WORD ONLY:"""
+    Respond with ONLY ONE WORD: "GOOD" or "BAD"
+    """
         
         try:
             result = self.client.chat.completions.create(
-                model="gpt-4o-mini",  # Cheaper/faster model
+                model="gpt-4o-mini",
                 messages=[{"role": "user", "content": analysis_prompt}],
                 max_tokens=10,
                 temperature=0
@@ -84,10 +130,11 @@ class ResponseAnalyzer:
             verdict = result.choices[0].message.content.strip().upper()
             is_good = "GOOD" in verdict
             
-            print(f"📊 Response Quality Check: {'✅ GOOD - Answer is sufficient' if is_good else '❌ BAD - Triggering deep research'}")
+            print(f"📊 Response Quality Check (LLM): {'✅ GOOD' if is_good else '❌ BAD - Triggering deep research'}")
             
             return is_good
             
         except Exception as e:
             print(f"⚠️ Analysis failed: {e}. Assuming response is GOOD (safe default).")
-            return True  # Default to accepting response if analysis fails
+            return True
+    
