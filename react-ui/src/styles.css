@@ -744,3 +744,63 @@ body,
     transform: scale(1.0);
   }
 }
+
+/* --- Message Formatting Improvements --- */
+
+/* Table Styles */
+.message-table-wrapper {
+  overflow-x: auto;
+  margin: 16px 0;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+}
+
+.message-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.message-table th,
+.message-table td {
+  padding: 12px 15px;
+  border-bottom: 1px solid #eee;
+  text-align: left;
+}
+
+.message-table th {
+  background-color: #f8f9fa;
+  font-weight: 600;
+  color: #333;
+  border-bottom: 2px solid #ddd;
+}
+
+.message-table tr:last-child td {
+  border-bottom: none;
+}
+
+.message-table tr:nth-child(even) {
+  background-color: #fcfcfc;
+}
+
+/* Header Styles inside Messages */
+.msg-h2, .msg-h3, .msg-h4 {
+  color: #1976d2; /* Primary color */
+  margin-top: 24px;
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+
+.msg-h2 { font-size: 1.4em; border-bottom: 1px solid #eee; padding-bottom: 8px; }
+.msg-h3 { font-size: 1.2em; }
+.msg-h4 { font-size: 1.1em; color: #444; }
+
+/* Ensure lists inside messages have proper spacing */
+.message-list {
+  padding-left: 24px;
+  margin-bottom: 16px;
+}
+
+.message-list li {
+  margin-bottom: 6px;
+}
