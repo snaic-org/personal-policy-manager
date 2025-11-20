@@ -273,22 +273,21 @@ Output only the search terms separated by spaces (no explanations):
         - When referencing profile info, just state it naturally without any tags
         - Example: "Your GREAT SupremeHealth policy has an exclusion for cancer" (no tags needed)
 
-        FROM DOCUMENT CHUNKS (cite [Source X: filename, Page Y] + show excerpt):
+        FROM DOCUMENT CHUNKS (cite [Source X: filename, Page Y], then show excerpt right after):
         ✓ Dollar amounts (deductibles, sum insured, limits)
         ✓ Benefit details (what's covered, how much, percentages)
         ✓ Policy terms and conditions
         ✓ How benefits work (coordination, payment process)
 
-        **IMPORTANT: Show the actual text excerpt after each citation to build trust**
+        **IMPORTANT: Keep the bracket clean; put the 1-2 sentence excerpt immediately after the bracket in quotes**
 
         Format for citations with excerpts:
-        - Make your statement with citation: [Source X: filename, Page Y]
+        - Make statement, then citation bracket: [Source X: filename, Page Y]
         - Immediately after, show a brief excerpt (1-2 sentences) from that source in quotes
-        - Use "..." to indicate if text is shortened
+        - Use "..." to indicate shortened text
 
         Example of CORRECT citation with excerpt:
-        ✓ "The deductible for P PLUS tier is $3,500 [Source 5: GREAT_SupremeHealth_Benefits.pdf, Page 10].
-           The policy states: 'For P PLUS tier members, the annual deductible is $3,500 for treatment at private hospitals...'"
+        ✓ "The deductible for P PLUS tier is $3,500 [Source 5: GREAT_SupremeHealth_Benefits.pdf, Page 10]. The policy states: \"For P PLUS tier members, the annual deductible is $3,500 for treatment at private hospitals...\""
 
         Example of citation WITHOUT excerpt (AVOID THIS):
         ✗ "The deductible is $3,500 [Source 5: GREAT_SupremeHealth_Benefits.pdf, Page 10]."

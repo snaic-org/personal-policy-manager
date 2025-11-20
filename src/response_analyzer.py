@@ -19,9 +19,43 @@ class ResponseAnalyzer:
         Checks if the RAG response adequately answered the question.
         Returns True if good, False if needs deep research.
         """
-        
+        import re as regex  # local import to avoid scope issues in comprehensions
+        response_text = response or ""
+        response_lower = response_text.lower()
+
+        # Special case: clear, definitive negatives should be treated as satisfactory
+        definitive_negative_phrases = [
+            "you do not have",
+            "you don't have",
+            "you are not covered",
+            "you aren't covered",
+            "does not have any",
+            "no document found",
+            "no relevant documents",
+            "no records found",
+            "no policy found",
+            "no coverage found",
+            "no evidence of coverage",
+            "policy does not cover",
+            "couldn't find any relevant document",
+            "could not find any relevant document",
+            "couldn't find any relevant documents",
+            "could not find any relevant documents",
+        ]
+        definitive_negative_patterns = [
+            r"\bnot (eligible|covered)\b",
+            r"\bno (plan|policy|coverage) on file\b",
+            r"\bno (matching )?document\b",
+            r"\bnothing (relevant )?found\b",
+        ]
+        if any(phrase in response_lower for phrase in definitive_negative_phrases) or any(
+            regex.search(pattern, response_lower) for pattern in definitive_negative_patterns
+        ):
+            print("📊 Quality Check: ✅ Definitive negative response detected; treating as satisfactory.")
+            return True
+
         # Quick checks first
-        if not response or len(response.strip()) < 50:
+        if not response_text or len(response_text.strip()) < 50:
             print("📊 Quality Check: ❌ Response too short")
             return False
         
@@ -39,7 +73,6 @@ class ResponseAnalyzer:
             "were not found in the provided documents"  # ← And this!
         ]
         
-        response_lower = response.lower()
         if any(phrase in response_lower for phrase in dont_know_phrases):
             print(f"📊 Quality Check: ❌ Contains 'don't know' phrase")
             return False

@@ -1267,29 +1267,33 @@ class QueryProcessor:
     def process_query_stream(
         self, query: str, batch_id: str = None, user_profile: Optional[Dict] = None
     ):
-        """Process a query with IMMEDIATE streaming + Post-Hoc Quality Check."""
+        """
+        Two-Phase Streaming Flow:
+        1. Immediate RAG Response (Fast)
+        2. Post-Response Analysis -> Optional Deep Research (Slow)
+        """
         try:
-            # === Guard 1: Out-of-scope filter ===
+            # === Guard: Out-of-scope ===
             if self._is_out_of_scope(query):
-                refusal = "I can only help with insurance and policy questions using the provided documents."
-                yield "data: " + json.dumps({"content": refusal}) + "\n\n"
+                yield "data: " + json.dumps(
+                    {"content": "I can only help with insurance questions."}
+                ) + "\n\n"
                 yield "data: " + json.dumps({"done": True}) + "\n\n"
                 return
 
-            # Determine batch and load indexes
+            # Setup Batch
             target_batch = batch_id or self.batch_manager.get_default_batch()
             if not target_batch or not self._ensure_batch_loaded(target_batch):
                 yield "data: " + json.dumps({"error": "Batch loading failed."}) + "\n\n"
                 return
 
-            start_time = time.time()
             print(f"\nProcessing query: {query}")
 
-            # Analyze intent (Quick check)
+            # 1. Intent Analysis
             intent_analyzer = IntentAnalyzer()
             intent = intent_analyzer.analyze(query)
 
-            # Run Retrieval (Async Adapter)
+            # 2. Retrieval (Async)
             is_personal_batch = target_batch.startswith("user_")
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -1302,93 +1306,119 @@ class QueryProcessor:
             finally:
                 loop.close()
 
-            # Deduplicate and Rerank
+            # 3. Deduplicate/Rerank
             unique_results = self._deduplicate_results(raw_search_results)
             unique_results = self._rerank_insurance_results(
                 query, unique_results, max_results=config.MAX_CONTEXT_CHUNKS + 3
             )
 
+            # Buffer to capture the first response for analysis
+            rag_response_buffer = ""
+
+            # =====================================================
+            # PHASE 1: STANDARD RAG (Immediate Answer)
+            # =====================================================
             if not unique_results:
-                yield "data: " + json.dumps(
-                    {"content": "No information found.", "done": True}
-                ) + "\n\n"
-                return
+                # Handle no docs case
+                msg = "I couldn't find any relevant documents regarding your query."
+                yield "data: " + json.dumps({"content": msg}) + "\n\n"
+                rag_response_buffer = msg
+            else:
+                # Stream the RAG response chunks
+                for chunk in self._generate_response_stream(
+                    query,
+                    unique_results,
+                    is_personal_batch,
+                    user_profile,
+                    include_final_done=False,
+                ):
+                    # Send chunk to UI
+                    yield chunk
 
-            # === PHASE 1: STREAMING RAG (Fast Response) ===
-            print("🔄 Streaming Initial RAG Response...")
+                    # Accumulate for analysis
+                    try:
+                        data = json.loads(chunk.replace("data: ", "").strip())
+                        if data.get("done"):
+                            # We control the final done message outside this loop.
+                            continue
+                        if "content" in data:
+                            rag_response_buffer += data["content"]
+                    except:
+                        pass
 
-            full_response_buffer = ""  # We record what we say here
+            # =====================================================
+            # PHASE 2: ANALYZE & TRANSITION
+            # =====================================================
 
-            # We iterate the generator, sending chunks to User AND Buffer simultaneously
-            for chunk in self._generate_response_stream(
-                query, unique_results, is_personal_batch, user_profile
-            ):
-                # Parse the chunk to extract text for our buffer
-                try:
-                    chunk_data = json.loads(chunk.replace("data: ", "").strip())
-                    if "content" in chunk_data:
-                        full_response_buffer += chunk_data["content"]
-                except:
-                    pass
+            # Note: We have NOT sent {"done": True} yet. The stream is still open.
 
-                # Send to User immediately (The Visual Stream)
-                yield chunk
+            should_deep_research = False
 
-            # === PHASE 2: POST-HOC QUALITY CHECK (Smart Check) ===
-            # The user has already seen the RAG answer. Now we check if it was good enough.
             if self.deep_research_enabled:
-                print("🔍 Analyzing response quality...")
                 response_analyzer = ResponseAnalyzer()
+
+                # Analyze the buffer we just collected
                 is_satisfactory = response_analyzer._analyze_response_quality(
-                    query, full_response_buffer, user_profile
+                    query, rag_response_buffer, user_profile
                 )
 
                 if not is_satisfactory:
-                    print("⚠️ Response deemed insufficient. Triggering Deep Research...")
+                    should_deep_research = True
 
-                    # Send a transition message to the user
-                    yield "data: " + json.dumps(
-                        {
-                            "content": "\n\n---\n**Auto-Analysis:** My initial check suggests more detail is needed. Performing deep research now...\n\n"
-                        }
-                    ) + "\n\n"
+            # =====================================================
+            # PHASE 3: DEEP RESEARCH (If needed)
+            # =====================================================
 
-                    # Run Deep Research
-                    from src.run_ui import run_ui
+            if should_deep_research:
+                print("⚠️ Initial response insufficient. Triggering Deep Research...")
 
-                    # We need a fresh context build for deep research
-                    profile_info, context_from_docs = self._prepare_context(
-                        unique_results, is_personal_batch, user_profile
-                    )
+                # --- THE VISUAL SEPARATOR ---
+                # This creates a visual break in the UI to look like a "new section"
+                # You can also use **Bold Text** to announce the status change.
+                transition_msg = (
+                    "\n\n"
+                    "---\n"
+                    "**🕵️ Deep Research Triggered**\n"
+                    "The initial search was inconclusive. I am now performing a deeper analysis of your documents and external sources. Please wait...\n\n"
+                )
 
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    try:
-                        async_gen = run_ui(
-                            query=query,
-                            intent=intent,
-                            profile_info=profile_info,
-                            context_from_docs=context_from_docs,
-                        ).__aiter__()
+                yield "data: " + json.dumps({"content": transition_msg}) + "\n\n"
 
-                        while True:
-                            try:
-                                chunk = loop.run_until_complete(async_gen.__anext__())
-                                yield "data: " + json.dumps(chunk) + "\n\n"
-                            except StopAsyncIteration:
-                                break
-                    finally:
-                        loop.close()
+                # Prepare fresh context
+                profile_info, context_from_docs = self._prepare_context(
+                    unique_results, is_personal_batch, user_profile
+                )
 
-            # Signal completion
+                # Run Deep Research Stream
+                from src.run_ui import run_ui
+
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    async_gen = run_ui(
+                        query=query,
+                        intent=intent,
+                        profile_info=profile_info,
+                        context_from_docs=context_from_docs,
+                    ).__aiter__()
+
+                    while True:
+                        try:
+                            chunk = loop.run_until_complete(async_gen.__anext__())
+                            yield "data: " + json.dumps(chunk) + "\n\n"
+                        except StopAsyncIteration:
+                            break
+                finally:
+                    loop.close()
+
+            # =====================================================
+            # DONE
+            # =====================================================
             yield "data: " + json.dumps({"done": True}) + "\n\n"
-
-            print(f"Total processing time: {time.time() - start_time:.2f}s")
 
         except Exception as e:
             import traceback
 
-            print(f"Error: {e}")
             traceback.print_exc()
             yield "data: " + json.dumps({"error": str(e)}) + "\n\n"
 
@@ -1538,6 +1568,7 @@ class QueryProcessor:
         search_results: List[Dict],
         is_personal_batch: bool,
         user_profile: Optional[Dict],
+        include_final_done: bool = True,
     ):
         """
         Generate streaming response using Gemini Flash (Synchronous Version).
@@ -1546,9 +1577,10 @@ class QueryProcessor:
             yield "data: " + json.dumps(
                 {
                     "content": "I couldn't find any relevant information in the documents to answer your question.",
-                    "done": True,
                 }
             ) + "\n\n"
+            if include_final_done:
+                yield "data: " + json.dumps({"done": True}) + "\n\n"
             return
 
         context_parts = []
@@ -1574,9 +1606,10 @@ class QueryProcessor:
             yield "data: " + json.dumps(
                 {
                     "content": "Error: Found relevant documents but failed to extract content for context.",
-                    "done": True,
                 }
             ) + "\n\n"
+            if include_final_done:
+                yield "data: " + json.dumps({"done": True}) + "\n\n"
             return
 
         context_from_docs = "\n\n---\n\n".join(context_parts)
@@ -1674,9 +1707,13 @@ class QueryProcessor:
                 if chunk.text:
                     yield "data: " + json.dumps({"content": chunk.text}) + "\n\n"
 
-            # Send final done message
-            yield "data: " + json.dumps({"done": True}) + "\n\n"
-            print("Finished streaming response from Gemini API.")
+            if include_final_done:
+                yield "data: " + json.dumps({"done": True}) + "\n\n"
+            print(
+                "Finished streaming response from Gemini API."
+                if include_final_done
+                else "Finished streaming response from Gemini API (control returning to caller for further actions)."
+            )
 
         except Exception as e:
             print(f"Error during Gemini API streaming call: {e}")
