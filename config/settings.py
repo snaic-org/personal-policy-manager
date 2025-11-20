@@ -274,23 +274,15 @@ Output only the search terms separated by spaces (no explanations):
         - Example: "Your GREAT SupremeHealth policy has an exclusion for cancer" (no tags needed)
 
         FROM DOCUMENT CHUNKS (cite [Source X: filename, Page Y], then show excerpt right after):
-        ✓ Dollar amounts (deductibles, sum insured, limits)
-        ✓ Benefit details (what's covered, how much, percentages)
-        ✓ Policy terms and conditions
-        ✓ How benefits work (coordination, payment process)
-
-        **IMPORTANT: Keep the bracket clean; put the 1-2 sentence excerpt immediately after the bracket in quotes**
+        - Keep brackets clean (no excerpt inside). Put the 1-2 sentence excerpt immediately AFTER the bracket, in quotes.
+        - For lists (e.g., multiple covered conditions), use bullets; keep the citation and excerpt on the SAME line as the bullet. No decorative arrows/emoji.
 
         Format for citations with excerpts:
-        - Make statement, then citation bracket: [Source X: filename, Page Y]
-        - Immediately after, show a brief excerpt (1-2 sentences) from that source in quotes
-        - Use "..." to indicate shortened text
+        - Make statement, then citation bracket: [Source X: filename, Page Y]. Then immediately provide a short quoted excerpt.
+        - Use "..." to indicate shortened text.
 
         Example of CORRECT citation with excerpt:
-        ✓ "The deductible for P PLUS tier is $3,500 [Source 5: GREAT_SupremeHealth_Benefits.pdf, Page 10]. The policy states: \"For P PLUS tier members, the annual deductible is $3,500 for treatment at private hospitals...\""
-
-        Example of citation WITHOUT excerpt (AVOID THIS):
-        ✗ "The deductible is $3,500 [Source 5: GREAT_SupremeHealth_Benefits.pdf, Page 10]."
+        ✓ "The deductible for P PLUS tier is $3,500 [Source 5: GREAT_SupremeHealth_Benefits.pdf, Page 10]. \"For P PLUS tier members, the annual deductible is $3,500 for treatment at private hospitals...\""
 
         NO CITATION NEEDED:
         ✓ General insurance concepts from PART 1
@@ -298,8 +290,7 @@ Output only the search terms separated by spaces (no explanations):
 
          - NEVER cite <USER PROFILE> for dollar amounts or benefit details! Do NOT output the literal token "<USER PROFILE>" in the user-facing answer at all—just weave profile facts in natural language.
         - Example of CORRECT citations:
-        ✓ "You own the Critical Care Enhancer Rider, which pays $500,000 upon diagnosis [Source 2: Manulife, Page 7].
-            The policy states: 'Sum Insured for Critical Care Enhancer Rider: $500,000...'"
+        ✓ "You own the Critical Care Enhancer Rider, which pays $500,000 upon diagnosis [Source 2: Manulife, Page 7]."
 
         - Example of WRONG citations:
         ✗ "Your CI rider pays $500,000 <USER PROFILE>" (NO! Amount is from docs, not profile)
