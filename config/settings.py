@@ -45,15 +45,15 @@ class Settings:
 
         # Model settings for query expansion
         self.EXPANSION_MODEL = "gpt-4o-mini"
-        self.EXPANSION_MAX_TOKENS = 150
+        self.EXPANSION_MAX_TOKENS = 1024
         self.EXPANSION_TEMPERATURE = 0.1
 
         # Model settings for response generation
         self.RESPONSE_MODEL = "gpt-4o"
         self.RESPONSE_MAX_TOKENS = (
-            2500  # Increased to accommodate text excerpts with citations
+            8192  # Increased to accommodate text excerpts with citations
         )
-        self.RESPONSE_TEMPERATURE = 0.05
+        self.RESPONSE_TEMPERATURE = 0.3
 
         # Feature flags
         self.DEEP_RESEARCH_ENABLED = (
@@ -178,6 +178,10 @@ PART 3: POLICY DOCUMENT CHUNKS (FOR CITATION & DETAILS ONLY)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PART 4: RESPONSE RULES (FOLLOW EXACTLY IN THIS ORDER)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+IF THE QUESTION IS NOT ABOUT INSURANCE/POLICIES/COVERAGE:
+- Say: "I can only answer insurance and policy questions using the provided documents."
+- Do not attempt to answer anything outside insurance. Stop.
 
 STEP 1: IDENTIFY WHAT THE USER IS ASKING ABOUT
 ───────────────────────────────────────────────────────────────────────

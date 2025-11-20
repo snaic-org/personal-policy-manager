@@ -16,6 +16,7 @@ import re
 
 from openai import OpenAI
 from openai import AsyncOpenAI
+import google.generativeai as genai
 
 from batch_manager import BatchManager
 from utils.search import HybridSearchEngine
@@ -25,11 +26,22 @@ from config.settings import settings as config
 
 
 class QueryProcessor:
+    # def __init__(self, batch_manager: BatchManager):
+    #     self.batch_manager = batch_manager
+    #     self.search_engine = None
+    #     self.current_batch_id = None
+    #     self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    #     self.deep_research_enabled = config.DEEP_RESEARCH_ENABLED
+
+    # using gemini 2.5 flash
     def __init__(self, batch_manager: BatchManager):
         self.batch_manager = batch_manager
         self.search_engine = None
         self.current_batch_id = None
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+
+        self.model_name = "gemini-2.5-flash"
         self.deep_research_enabled = config.DEEP_RESEARCH_ENABLED
 
     async def run_retrieval(
@@ -60,8 +72,66 @@ class QueryProcessor:
             None, self._run_retrieval_sync, query, batch_id, user_profile, top_k
         )
 
+    def _is_out_of_scope(self, query: str) -> bool:
+        """
+        Lightweight guard to block prompts that are clearly unrelated to insurance/policy Q&A.
+        This avoids wasting retrieval/generation on code/math/general chit-chat.
+        """
+        q = (query or "").lower()
+
+        insurance_signals = [
+            "policy",
+            "coverage",
+            "claim",
+            "premium",
+            "benefit",
+            "deductible",
+            "co-insurance",
+            "exclusion",
+            "rider",
+            "sum insured",
+            "health plan",
+            "critical illness",
+            "insurer",
+            "travel insurance",
+            "life insurance",
+            "hospital",
+        ]
+
+        # If it mentions any insurance-related term, allow it
+        if any(sig in q for sig in insurance_signals):
+            return False
+
+        out_of_scope_signals = [
+            "python",
+            "javascript",
+            "code",
+            "snippet",
+            "algorithm",
+            "sql",
+            "database",
+            "react",
+            "typescript",
+            "api design",
+            "server",
+            "docker",
+            "kubernetes",
+            "math",
+            "equation",
+            "poem",
+            "story",
+            "song",
+            "lyrics",
+        ]
+
+        return any(sig in q for sig in out_of_scope_signals)
+
     def _run_retrieval_sync(
-        self, query: str, batch_id: str, user_profile: Optional[Dict] = None, top_k: int = 10
+        self,
+        query: str,
+        batch_id: str,
+        user_profile: Optional[Dict] = None,
+        top_k: int = 10,
     ) -> List[Dict[str, Any]]:
         """Synchronous retrieval pipeline (intended to be run in a thread).
 
@@ -85,10 +155,12 @@ class QueryProcessor:
 
         if is_personal_batch and user_profile:
             # For multi-policy, we want to ensure we get enough chunks per policy
-            num_policies = len(user_profile.get("insurance_policies", {}) or {"default": None})
+            num_policies = len(
+                user_profile.get("insurance_policies", {}) or {"default": None}
+            )
             # Ensure at least 10 chunks per policy to give reranker enough material
             chunks_per_policy = max(search_pool_size // max(num_policies, 1), 10)
-            
+
             raw_results = self._multi_policy_search(
                 query=query,
                 expanded_query=expanded_query,
@@ -107,6 +179,99 @@ class QueryProcessor:
 
         return reranked_results
 
+    # async def run_generation(
+    #     self,
+    #     query: str,
+    #     search_results: List[Dict],
+    #     is_personal_batch: bool = False,
+    #     user_profile: Optional[Dict] = None,
+    # ) -> str:
+    #     """
+    #     Async method to run generation pipeline.
+
+    #     Args:
+    #         query: Original user query
+    #         search_results: Retrieved search results
+    #         is_personal_batch: Whether this is a personal batch
+    #         user_profile: Optional user profile
+
+    #     Returns:
+    #         Generated response string
+    #     """
+    #     if not search_results:
+    #         return "I couldn't find any relevant information to answer your question."
+
+    #     context_parts = []
+    #     for i, result in enumerate(search_results, 1):
+    #         content = result.get("content", "").strip()
+    #         metadata = result.get("metadata", {})
+
+    #         if content:
+    #             filename = metadata.get("filename", "Unknown Document")
+    #             page = metadata.get("page_number", "N/A")
+    #             heading = metadata.get("page_heading", "General Information")
+
+    #             source_ref = f"[Source {i}: {filename}, Page {page}]"
+    #             context_parts.append(
+    #                 f"{source_ref}\nPAGE HEADING: {heading}\n\n{content}"
+    #             )
+
+    #     if not context_parts:
+    #         return "Error: Found documents but failed to extract content."
+
+    #     context_from_docs = "\n\n---\n\n".join(context_parts)
+
+    #     if is_personal_batch and user_profile:
+    #         user_name = user_profile.get("name", "User")
+    #         insurance_policies = user_profile.get("insurance_policies", {})
+
+    #         profile_info = f"\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n"
+    #         profile_info += f"- User Name: {user_name}\n"
+
+    #         if insurance_policies:
+    #             profile_info += f"- User's Policies:\n"
+    #             for filename, policy_data in insurance_policies.items():
+    #                 plan = policy_data.get("plan_name", "Unknown Plan")
+    #                 tier = policy_data.get("tier", "N/A")
+    #                 profile_info += f"  - Policy: {plan} (Tier: {tier})\n"
+    #     else:
+    #         user_name = "User"
+    #         profile_info = "\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n- No user profile provided.\n"
+
+    #     salutation = f"Hi {user_name.split()[0] if user_name != 'User' else 'Hi'},"
+
+    #     prompt_instructions = config.INSURANCE_SYSTEM_PROMPT.format(
+    #         profile_info=profile_info,
+    #         context_from_docs=context_from_docs,
+    #         salutation=salutation,
+    #         original_query=query,
+    #     )
+
+    #     try:
+    #         # Use the async OpenAI client for non-streaming generation inside
+    #         # an async method (avoids blocking the event loop in evaluation).
+    #         async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+    #         response = await async_client.chat.completions.create(
+    #             model=config.RESPONSE_MODEL,
+    #             messages=[
+    #                 {
+    #                     "role": "system",
+    #                     "content": "You are an expert financial advisor. Answer insurance questions using provided documents. If the user asks for anything outside insurance/policies/coverage/claims, respond that you can only answer insurance questions and stop. Be concise and accurate.",
+    #                 },
+    #                 {"role": "user", "content": prompt_instructions},
+    #             ],
+    #             max_tokens=config.RESPONSE_MAX_TOKENS,
+    #             temperature=config.RESPONSE_TEMPERATURE,
+    #         )
+
+    #         # Workaround for object wrappers in openai client
+    #         return response.choices[0].message.content
+
+    #     except Exception as e:
+    #         print(f"Error during generation: {e}")
+    #         raise
+
     async def run_generation(
         self,
         query: str,
@@ -115,16 +280,7 @@ class QueryProcessor:
         user_profile: Optional[Dict] = None,
     ) -> str:
         """
-        Async method to run generation pipeline.
-
-        Args:
-            query: Original user query
-            search_results: Retrieved search results
-            is_personal_batch: Whether this is a personal batch
-            user_profile: Optional user profile
-
-        Returns:
-            Generated response string
+        Async method to run generation pipeline using Gemini.
         """
         if not search_results:
             return "I couldn't find any relevant information to answer your question."
@@ -133,12 +289,10 @@ class QueryProcessor:
         for i, result in enumerate(search_results, 1):
             content = result.get("content", "").strip()
             metadata = result.get("metadata", {})
-
             if content:
                 filename = metadata.get("filename", "Unknown Document")
                 page = metadata.get("page_number", "N/A")
                 heading = metadata.get("page_heading", "General Information")
-
                 source_ref = f"[Source {i}: {filename}, Page {page}]"
                 context_parts.append(
                     f"{source_ref}\nPAGE HEADING: {heading}\n\n{content}"
@@ -151,17 +305,8 @@ class QueryProcessor:
 
         if is_personal_batch and user_profile:
             user_name = user_profile.get("name", "User")
-            insurance_policies = user_profile.get("insurance_policies", {})
-
-            profile_info = f"\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n"
-            profile_info += f"- User Name: {user_name}\n"
-
-            if insurance_policies:
-                profile_info += f"- User's Policies:\n"
-                for filename, policy_data in insurance_policies.items():
-                    plan = policy_data.get("plan_name", "Unknown Plan")
-                    tier = policy_data.get("tier", "N/A")
-                    profile_info += f"  - Policy: {plan} (Tier: {tier})\n"
+            profile_info = f"\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n- User Name: {user_name}\n"
+            # (Add more profile logic here if needed, matching your stream method)
         else:
             user_name = "User"
             profile_info = "\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n- No user profile provided.\n"
@@ -176,25 +321,22 @@ class QueryProcessor:
         )
 
         try:
-            # Use the async OpenAI client for non-streaming generation inside
-            # an async method (avoids blocking the event loop in evaluation).
-            async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            # --- GEMINI IMPLEMENTATION ---
+            system_instruction = "You are an expert financial advisor. Answer insurance questions using provided documents. Be concise and accurate."
 
-            response = await async_client.chat.completions.create(
-                model=config.RESPONSE_MODEL,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert financial advisor. Answer insurance questions using provided documents. Be concise and accurate.",
-                    },
-                    {"role": "user", "content": prompt_instructions},
-                ],
-                max_tokens=config.RESPONSE_MAX_TOKENS,
-                temperature=config.RESPONSE_TEMPERATURE,
+            model = genai.GenerativeModel(
+                model_name=self.model_name, system_instruction=system_instruction
             )
 
-            # Workaround for object wrappers in openai client
-            return response.choices[0].message.content
+            response = await model.generate_content_async(
+                prompt_instructions,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=config.RESPONSE_TEMPERATURE,
+                    max_output_tokens=config.RESPONSE_MAX_TOKENS,
+                ),
+            )
+
+            return response.text
 
         except Exception as e:
             print(f"Error during generation: {e}")
@@ -524,10 +666,61 @@ class QueryProcessor:
 
         return all_results
 
+    # def _expand_query(self, query: str) -> str:
+    #     """
+    #     Expands the user query using intelligent LLM rewriting and a hardcoded
+    #     critical term map for the insurance domain.
+    #     """
+    #     added_keywords = set()
+    #     query_lower = query.lower()
+
+    #     # Add keywords from the critical term map (from config)
+    #     for term, expansion in config.CRITICAL_TERM_MAP.items():
+    #         if term in query_lower:
+    #             added_keywords.add(expansion)
+
+    #     # Add keywords from the policy type map (from config)
+    #     for term, expansion in config.POLICY_TYPE_KEYWORDS.items():
+    #         if term in query_lower:
+    #             added_keywords.update(expansion.split())
+
+    #     # Add keywords for specific scenarios
+    #     if (
+    #         "warded" in query_lower
+    #         or "surgery" in query_lower
+    #         or "hospital" in query_lower
+    #     ):
+    #         added_keywords.add("deductible")
+    #         added_keywords.add("co-insurance")
+
+    #     manual_expansion = " ".join(added_keywords)
+
+    #     try:
+    #         expansion_prompt = config.QUERY_EXPANSION_PROMPT.format(query=query)
+
+    #         response = self.client.chat.completions.create(
+    #             model=config.EXPANSION_MODEL,
+    #             messages=[{"role": "user", "content": expansion_prompt}],
+    #             max_tokens=config.EXPANSION_MAX_TOKENS,
+    #             temperature=config.EXPANSION_TEMPERATURE,
+    #         )
+
+    #         llm_keywords = response.choices[0].message.content.strip()
+
+    #         # Combine all three: Original Query + Manual Keywords + LLM Keywords
+    #         expanded_query = f"{query} {manual_expansion} {llm_keywords}"
+
+    #         print(f"Query intelligently expanded to: {expanded_query}")
+    #         return expanded_query
+
+    #     except Exception as e:
+    #         print(f"Error during query expansion: {e}")
+    #         # Fallback to original query + manual expansion
+    #         return f"{query} {manual_expansion}"
+
     def _expand_query(self, query: str) -> str:
         """
-        Expands the user query using intelligent LLM rewriting and a hardcoded
-        critical term map for the insurance domain.
+        Expands the user query using Gemini Flash and hardcoded maps.
         """
         added_keywords = set()
         query_lower = query.lower()
@@ -556,14 +749,20 @@ class QueryProcessor:
         try:
             expansion_prompt = config.QUERY_EXPANSION_PROMPT.format(query=query)
 
-            response = self.client.chat.completions.create(
-                model=config.EXPANSION_MODEL,
-                messages=[{"role": "user", "content": expansion_prompt}],
-                max_tokens=config.EXPANSION_MAX_TOKENS,
-                temperature=config.EXPANSION_TEMPERATURE,
+            # --- CHANGED: Use Gemini for expansion ---
+            # Initialize a temporary model instance for this synchronous call
+            model = genai.GenerativeModel(self.model_name)
+
+            # Generate content (blocking call is fine here since this method is run in thread executor)
+            response = model.generate_content(
+                expansion_prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=config.EXPANSION_TEMPERATURE,
+                    max_output_tokens=config.EXPANSION_MAX_TOKENS,
+                ),
             )
 
-            llm_keywords = response.choices[0].message.content.strip()
+            llm_keywords = response.text.strip()
 
             # Combine all three: Original Query + Manual Keywords + LLM Keywords
             expanded_query = f"{query} {manual_expansion} {llm_keywords}"
@@ -718,6 +917,13 @@ class QueryProcessor:
     ):
         """Process a query and yield response chunks for streaming."""
         try:
+            # === Guard 1: Out-of-scope filter before any retrieval/LLM work ===
+            if self._is_out_of_scope(query):
+                refusal = "I can only help with insurance and policy questions using the provided documents."
+                yield "data: " + json.dumps({"content": refusal}) + "\n\n"
+                yield "data: " + json.dumps({"done": True}) + "\n\n"
+                return
+
             # Determine the target batch
             target_batch = batch_id or self.batch_manager.get_default_batch()
             if not target_batch:
@@ -851,6 +1057,15 @@ class QueryProcessor:
             unique_results = self._rerank_insurance_results(
                 query, unique_results, max_results=config.MAX_CONTEXT_CHUNKS + 3
             )
+
+            # === Guard 2: Retrieval sufficiency gate ===
+            if not unique_results:
+                error_msg = "I could not find relevant insurance information in your documents for this question."
+                yield "data: " + json.dumps(
+                    {"content": error_msg, "done": True}
+                ) + "\n\n"
+                return
+
             # Debug: write reranked chunks to a log file for inspection
             try:
                 from pathlib import Path
@@ -919,7 +1134,9 @@ class QueryProcessor:
             )
 
             # Step 3: If bad → trigger deep research
-            print(f"🔍 DEBUG: is_satisfactory={is_satisfactory}, deep_research_enabled={self.deep_research_enabled}")
+            print(
+                f"🔍 DEBUG: is_satisfactory={is_satisfactory}, deep_research_enabled={self.deep_research_enabled}"
+            )
             if not is_satisfactory and self.deep_research_enabled:
                 print("⚠️ Normal RAG response insufficient. Triggering deep research...")
                 # Notify user
@@ -975,6 +1192,146 @@ class QueryProcessor:
                 {"error": f"An error occurred while processing your query: {e}"}
             ) + "\n\n"
 
+    # def _generate_response_stream(
+    #     self,
+    #     original_query: str,
+    #     search_results: List[Dict],
+    #     is_personal_batch: bool,
+    #     user_profile: Optional[Dict],
+    # ):
+    #     """Generate streaming response using retrieved chunks and potentially user profile."""
+    #     if not search_results:
+    #         yield "data: " + json.dumps(
+    #             {
+    #                 "content": "I couldn't find any relevant information in the documents to answer your question.",
+    #                 "done": True,
+    #             }
+    #         ) + "\n\n"
+    #         return
+
+    #     context_parts = []
+    #     max_chunks_for_context = config.MAX_CONTEXT_CHUNKS
+    #     cited_filenames = set()
+
+    #     print(
+    #         f"Building context from top {min(len(search_results), max_chunks_for_context)} chunks..."
+    #     )
+    #     for i, result in enumerate(search_results[:max_chunks_for_context], 1):
+    #         content = result.get("content", "").strip()
+    #         metadata = result.get("metadata", {})
+    #         if content:
+    #             filename = metadata.get("filename", "Unknown Document")
+    #             page = metadata.get("page_number", "N/A")
+
+    #             heading = metadata.get("page_heading", "General Information")
+    #             source_ref = f"[Source {i}: {filename}, Page {page}]"
+    #             context_parts.append(
+    #                 f"{source_ref}\nPAGE HEADING: {heading}\n\n{content}"
+    #             )
+
+    #             cited_filenames.add(filename)
+
+    #     if not context_parts:
+    #         yield "data: " + json.dumps(
+    #             {
+    #                 "content": "Error: Found relevant documents but failed to extract content for context.",
+    #                 "done": True,
+    #             }
+    #         ) + "\n\n"
+    #         return
+
+    #     context_from_docs = "\n\n---\n\n".join(context_parts)
+
+    #     if is_personal_batch and user_profile:
+    #         user_name = user_profile.get("name", "User")
+    #         user_dob = user_profile.get("date_of_birth", "N/A")
+    #         insurance_policies = user_profile.get("insurance_policies", {})
+
+    #         profile_info = f"\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n"
+    #         profile_info += f"- User Name: {user_name}\n"
+    #         profile_info += f"- User DOB: {user_dob}\n"
+
+    #         if insurance_policies:
+    #             profile_info += f"- User's Policies:\n"
+    #             for filename, policy_data in insurance_policies.items():
+    #                 plan = policy_data.get("plan_name", "Unknown Plan")
+    #                 tier = policy_data.get("tier", "N/A")
+    #                 riders = policy_data.get("riders", [])
+    #                 underwriting = policy_data.get("underwriting", {})
+    #                 exclusions = underwriting.get("exclusions")
+
+    #                 # Add policy and tier info
+    #                 profile_info += f"  - Policy: {plan} (Tier: {tier})\n"
+
+    #                 # Add rider info
+    #                 if riders:
+    #                     # Handle list of strings or list of dicts
+    #                     rider_names = [
+    #                         r.get("plan_name", r) if isinstance(r, dict) else r
+    #                         for r in riders
+    #                     ]
+    #                     profile_info += f"    - Riders: {', '.join(rider_names)}\n"
+    #                 else:
+    #                     profile_info += f"    - Riders: None listed\n"
+
+    #                 # Add Exclusions to prompt
+    #                 if exclusions:
+    #                     profile_info += (
+    #                         f"    - !! IMPORTANT EXCLUSION: {exclusions} !!\n"
+    #                     )
+    #     else:
+    #         user_name = "User"
+    #         profile_info = "\n\n--- USER PROFILE (YOUR SOURCE OF TRUTH) ---\n- No user profile provided.\n"
+
+    #     salutation = f"Hi {user_name.split()[0] if user_name != 'User' else 'Hi'},"
+
+    #     # Use the system prompt from config with formatting
+    #     prompt_instructions = config.INSURANCE_SYSTEM_PROMPT.format(
+    #         profile_info=profile_info,
+    #         context_from_docs=context_from_docs,
+    #         salutation=salutation,
+    #         original_query=original_query,
+    #     )
+
+    #     # Call OpenAI API with streaming
+    #     try:
+    #         print("Sending streaming request to OpenAI API...")
+    #         if not self.client:
+    #             raise ValueError("OpenAI client is not initialized.")
+
+    #         stream = self.client.chat.completions.create(
+    #             model=config.RESPONSE_MODEL,
+    #             messages=[
+    #                 {
+    #                     "role": "system",
+    #                     "content": "You are an expert financial advisor. Answer insurance questions using the provided document chunks AND the user profile. The user profile, especially underwriting exclusions, is the absolute source of truth and overrides all document chunks. Exclusions are policy-scoped (a health plan exclusion cannot cancel CI/Life benefits) — evaluate each relevant policy independently. If the user question is not about insurance/policies/claims/coverage, politely respond that you can only answer insurance questions using the provided documents and stop. If no relevant context is available, state that plainly instead of inventing details. State exact amounts from documents; if an amount is not found, use EXACTLY: 'Amount not found in provided documents.' Never say 'depends' or 'the exact amount is not specified.' Do NOT output the literal token '<USER PROFILE>'. Use ONLY plain text - absolutely NO decorative characters, arrows (⬇, ↓, →), boxes, or emoji anywhere in your response. IMPORTANT: After each citation [Source X: filename, Page Y], show a brief excerpt (1-2 sentences) from that source in quotes to prove where the information came from. End cleanly after the last factual statement—do not add offers to help or follow-up questions.",
+    #                 },
+    #                 {"role": "user", "content": prompt_instructions},
+    #             ],
+    #             max_tokens=config.RESPONSE_MAX_TOKENS,
+    #             temperature=config.RESPONSE_TEMPERATURE,
+    #             stream=True,
+    #         )
+
+    #         print("Streaming response from OpenAI API...")
+
+    #         for chunk in stream:
+    #             if chunk.choices[0].delta.content is not None:
+    #                 content = chunk.choices[0].delta.content
+    #                 yield "data: " + json.dumps({"content": content}) + "\n\n"
+
+    #         # Send final done message
+    #         yield "data: " + json.dumps({"done": True}) + "\n\n"
+    #         print("Finished streaming response from OpenAI API.")
+
+    #     except Exception as e:
+    #         print(f"Error during OpenAI API streaming call: {e}")
+    #         yield "data: " + json.dumps(
+    #             {
+    #                 "error": "Sorry, I encountered an error while generating the response. Please try again later or check the system logs."
+    #             }
+    #         ) + "\n\n"
+
     def _generate_response_stream(
         self,
         original_query: str,
@@ -982,7 +1339,9 @@ class QueryProcessor:
         is_personal_batch: bool,
         user_profile: Optional[Dict],
     ):
-        """Generate streaming response using retrieved chunks and potentially user profile."""
+        """
+        Generate streaming response using Gemini Flash (Synchronous Version).
+        """
         if not search_results:
             yield "data: " + json.dumps(
                 {
@@ -994,7 +1353,6 @@ class QueryProcessor:
 
         context_parts = []
         max_chunks_for_context = config.MAX_CONTEXT_CHUNKS
-        cited_filenames = set()
 
         print(
             f"Building context from top {min(len(search_results), max_chunks_for_context)} chunks..."
@@ -1012,8 +1370,6 @@ class QueryProcessor:
                     f"{source_ref}\nPAGE HEADING: {heading}\n\n{content}"
                 )
 
-                cited_filenames.add(filename)
-
         if not context_parts:
             yield "data: " + json.dumps(
                 {
@@ -1025,6 +1381,7 @@ class QueryProcessor:
 
         context_from_docs = "\n\n---\n\n".join(context_parts)
 
+        # --- FIX: Build FULL User Profile String ---
         if is_personal_batch and user_profile:
             user_name = user_profile.get("name", "User")
             user_dob = user_profile.get("date_of_birth", "N/A")
@@ -1057,7 +1414,7 @@ class QueryProcessor:
                     else:
                         profile_info += f"    - Riders: None listed\n"
 
-                    # Add Exclusions to prompt
+                    # Add Exclusions to prompt (CRITICAL for your query)
                     if exclusions:
                         profile_info += (
                             f"    - !! IMPORTANT EXCLUSION: {exclusions} !!\n"
@@ -1068,7 +1425,13 @@ class QueryProcessor:
 
         salutation = f"Hi {user_name.split()[0] if user_name != 'User' else 'Hi'},"
 
-        # Use the system prompt from config with formatting
+        # Prepare the prompts
+        system_instruction = (
+            "You are an expert financial advisor. Answer insurance questions using the provided document chunks AND the user profile. "
+            "The user profile, especially underwriting exclusions, is the absolute source of truth. "
+            "State exact amounts from documents. Use ONLY plain text."
+        )
+
         prompt_instructions = config.INSURANCE_SYSTEM_PROMPT.format(
             profile_info=profile_info,
             context_from_docs=context_from_docs,
@@ -1076,42 +1439,50 @@ class QueryProcessor:
             original_query=original_query,
         )
 
-        # Call OpenAI API with streaming
+        # Call Gemini API with streaming (SYNCHRONOUSLY)
         try:
-            print("Sending streaming request to OpenAI API...")
-            if not self.client:
-                raise ValueError("OpenAI client is not initialized.")
+            print("Sending streaming request to Gemini API...")
 
-            stream = self.client.chat.completions.create(
-                model=config.RESPONSE_MODEL,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert financial advisor. Answer insurance questions using the provided document chunks AND the user profile. The user profile, especially underwriting exclusions, is the absolute source of truth and overrides all document chunks. Exclusions are policy-scoped (a health plan exclusion cannot cancel CI/Life benefits) — evaluate each relevant policy independently. State exact amounts from documents; if an amount is not found, use EXACTLY: 'Amount not found in provided documents.' Never say 'depends' or 'the exact amount is not specified.' Do NOT output the literal token '<USER PROFILE>'. Use ONLY plain text - absolutely NO decorative characters, arrows (⬇, ↓, →), boxes, or emoji anywhere in your response. IMPORTANT: After each citation [Source X: filename, Page Y], show a brief excerpt (1-2 sentences) from that source in quotes to prove where the information came from. End cleanly after the last factual statement—do not add offers to help or follow-up questions.",
-                    },
-                    {"role": "user", "content": prompt_instructions},
-                ],
-                max_tokens=config.RESPONSE_MAX_TOKENS,
-                temperature=config.RESPONSE_TEMPERATURE,
-                stream=True,
+            model = genai.GenerativeModel(
+                model_name=self.model_name, system_instruction=system_instruction
             )
 
-            print("Streaming response from OpenAI API...")
+            # Import specific types needed for config
+            from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
-            for chunk in stream:
-                if chunk.choices[0].delta.content is not None:
-                    content = chunk.choices[0].delta.content
-                    yield "data: " + json.dumps({"content": content}) + "\n\n"
+            # CHANGE: Use generate_content (blocking), NOT generate_content_async
+            response = model.generate_content(
+                prompt_instructions,
+                stream=True,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=config.RESPONSE_TEMPERATURE,
+                    max_output_tokens=config.RESPONSE_MAX_TOKENS,
+                ),
+                # Add Safety Settings to prevent "Finish Reason: 3" on medical topics
+                safety_settings={
+                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                },
+            )
+
+            print("Streaming response from Gemini API...")
+
+            # CHANGE: Standard for loop, NOT async for
+            for chunk in response:
+                if chunk.text:
+                    yield "data: " + json.dumps({"content": chunk.text}) + "\n\n"
 
             # Send final done message
             yield "data: " + json.dumps({"done": True}) + "\n\n"
-            print("Finished streaming response from OpenAI API.")
+            print("Finished streaming response from Gemini API.")
 
         except Exception as e:
-            print(f"Error during OpenAI API streaming call: {e}")
+            print(f"Error during Gemini API streaming call: {e}")
             yield "data: " + json.dumps(
                 {
-                    "error": "Sorry, I encountered an error while generating the response. Please try again later or check the system logs."
+                    "error": "Sorry, I encountered an error while generating the response."
                 }
             ) + "\n\n"
 
