@@ -82,25 +82,66 @@ class QueryProcessor:
         insurance_signals = [
             "policy",
             "coverage",
+            "covered",
+            "cover",
             "claim",
+            "claims",
             "premium",
             "benefit",
             "deductible",
             "co-insurance",
+            "coinsurance",
             "exclusion",
             "rider",
             "sum insured",
             "health plan",
             "critical illness",
             "insurer",
-            "travel insurance",
-            "life insurance",
+            "travel",
+            "trip",
+            "accident",
             "hospital",
+            # Plan/insurer names so short queries like "singlife vs fwd" are allowed
+            "singlife",
+            "fwd",
+            "aia",
+            "prudential",
+            "manulife",
+            "great eastern",
         ]
 
         # If it mentions any insurance-related term, allow it
         if any(sig in q for sig in insurance_signals):
             return False
+
+        # General knowledge or non-insurance domains
+        if any(
+            phrase in q
+            for phrase in [
+                "who is",
+                "president",
+                "prime minister",
+                "capital of",
+                "population of",
+                "weather",
+                "forecast",
+                "temperature",
+                "stock price",
+                "share price",
+                "bitcoin",
+                "crypto",
+                "football",
+                "soccer",
+                "nba",
+                "movie",
+                "song",
+                "lyrics",
+                "restaurant",
+                "visit",
+                "travel to",
+            ]
+        ):
+            return True
 
         out_of_scope_signals = [
             "python",
@@ -124,7 +165,11 @@ class QueryProcessor:
             "lyrics",
         ]
 
-        return any(sig in q for sig in out_of_scope_signals)
+        if any(sig in q for sig in out_of_scope_signals):
+            return True
+
+        # Default behavior: if it's not clearly insurance, treat it as out of scope
+        return True
 
     def _run_retrieval_sync(
         self,
@@ -428,20 +473,56 @@ class QueryProcessor:
                 "co-insurance",
             ]
         )
+        wants_travel_incident = any(
+            k in query_lower
+            for k in [
+                "travel",
+                "trip",
+                "overseas",
+                "abroad",
+                "rental car",
+                "car rental",
+                "road accident",
+                "accident",
+                "baggage",
+                "luggage",
+                "flight delay",
+                "trip cancellation",
+                "trip interruption",
+                "evacuation",
+            ]
+        )
 
         boosted = []
         currency_re = re.compile(r"(\$\s?\d|sgd|sum insured|payout|benefit)", re.I)
         health_re = re.compile(r"(deductible|co-?insurance|out[- ]of[- ]pocket)", re.I)
+        travel_med_re = re.compile(
+            r"(medical|medical expense|hospital|clinic|treatment|emergency evacuation|repatriation|overseas medical)",
+            re.I,
+        )
+        travel_pa_re = re.compile(
+            r"(personal accident|accidental death|permanent disablement|injury)",
+            re.I,
+        )
 
         forced_ci_candidate = None
         forced_ci_score = float("-inf")
         forced_health_candidate = None
         forced_health_score = float("-inf")
+        forced_travel_med_candidate = None
+        forced_travel_med_score = float("-inf")
+        forced_travel_pa_candidate = None
+        forced_travel_pa_score = float("-inf")
 
         for idx, res in enumerate(results):
             meta = res.get("metadata", {}) or {}
             content = (res.get("content") or "").lower()
             plan_context = meta.get("plan_context") or []
+            filename = (meta.get("filename") or "").lower()
+            travel_match = any(
+                "travel" in pc.lower() or "travelcare" in pc.lower()
+                for pc in plan_context
+            ) or ("travelcare" in filename)
 
             # Use combined_score from hybrid search as the base, falling back to score
             score = res.get("combined_score") or res.get("score", 0) or 0
@@ -456,6 +537,8 @@ class QueryProcessor:
                 "supremehealth" in pc.lower() for pc in plan_context
             ):
                 score += 0.3
+            if wants_travel_incident and travel_match:
+                score += 0.4
 
             if "sum insured" in content or "$" in content or "benefit" in content:
                 score += 0.1  # slight boost for amount-bearing chunks
@@ -463,6 +546,13 @@ class QueryProcessor:
                 score += 0.1
             if "major cancer" in content or "critical illness" in content:
                 score += 0.1
+            if wants_travel_incident and (
+                "evacuation" in content
+                or "repatriation" in content
+                or "accident" in content
+                or "medical expense" in content
+            ):
+                score += 0.2
 
             # Track best CI chunk with explicit amount words
             if wants_ci and (
@@ -494,6 +584,21 @@ class QueryProcessor:
                     forced_health_candidate = res
                     forced_health_score = health_score
 
+            # Track travel medical/evacuation chunks
+            if wants_travel_incident and travel_match:
+                if travel_med_re.search(content):
+                    bonus = 25
+                    travel_score = score + bonus
+                    if travel_score > forced_travel_med_score:
+                        forced_travel_med_candidate = res
+                        forced_travel_med_score = travel_score
+                if travel_pa_re.search(content):
+                    bonus = 20
+                    travel_pa_score = score + bonus
+                    if travel_pa_score > forced_travel_pa_score:
+                        forced_travel_pa_candidate = res
+                        forced_travel_pa_score = travel_pa_score
+
             boosted.append((score, res))
 
         # Sort by boosted score descending
@@ -509,6 +614,14 @@ class QueryProcessor:
         if wants_health and forced_health_candidate:
             if forced_health_candidate not in reranked[:max_results]:
                 reranked = [forced_health_candidate] + reranked
+
+        # Force-include travel medical/evacuation and personal accident chunks
+        if wants_travel_incident and forced_travel_med_candidate:
+            if forced_travel_med_candidate not in reranked[:max_results]:
+                reranked = [forced_travel_med_candidate] + reranked
+        if wants_travel_incident and forced_travel_pa_candidate:
+            if forced_travel_pa_candidate not in reranked[:max_results]:
+                reranked = [forced_travel_pa_candidate] + reranked
 
         return reranked[:max_results]
 
