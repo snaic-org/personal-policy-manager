@@ -1492,7 +1492,7 @@ class QueryProcessor:
                     "\n\n"
                     "---\n"
                     "**🕵️ Deep Research Triggered**\n"
-                    "The initial search was inconclusive. I am now performing a deeper analysis of your documents and external sources. Please wait...\n\n"
+                    "I am now performing a deeper analysis of your documents and external sources. Please wait...\n\n"
                 )
 
                 yield "data: " + json.dumps({"content": transition_msg}) + "\n\n"
