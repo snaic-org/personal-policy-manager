@@ -1,0 +1,42 @@
+services:
+
+  backend:
+    restart: "unless-stopped"
+    ports:
+      - "8000:8000"
+    command: python app/main.py
+    networks:
+      - default
+    env_file:
+      - ./backend/.env
+    build:
+      context: ./backend/
+    volumes:
+      - ./backend/documents:/app/documents
+      - ./backend/batches:/app/batches
+      - ./backend/instance:/app/instance
+    healthcheck:
+      test: ["CMD-SHELL", "python /app/app/healthcheck.py"]
+      interval: 1m
+      timeout: 10s
+      retries: 10
+
+  frontend:
+    restart: "unless-stopped"
+    ports:
+      - "3000:3000"
+    networks:
+      - default
+    env_file:
+      - ./frontend/.env
+    build:
+      context: ./frontend/
+      args:
+        NODE_ENV: production
+        VITE_API_URL: http://localhost:8000
+    environment:
+      NODE_ENV: production
+
+networks:
+  default:
+    driver: bridge

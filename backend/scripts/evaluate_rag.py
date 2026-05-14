@@ -50,8 +50,8 @@ except ImportError:
         ContextUtilization,
     )
 
-from batch_manager import BatchManager
-from query_processor import QueryProcessor
+from app.core.batch_manager import BatchManager
+from app.core.query_processor import QueryProcessor
 
 
 
@@ -173,12 +173,12 @@ async def evaluate_dataset(
     # Dynamic pipeline selection
     if pipeline == "optimized":
         print("[INFO] Using OPTIMIZED pipeline (RRF + Cross-Encoder)")
-        from query_processor_optimized import OptimizedQueryProcessor
+        from app.core.query_processor_optimized import OptimizedQueryProcessor
         qp = OptimizedQueryProcessor(bm)
         print(f"[INFO] Optimized pipeline config: {qp.get_pipeline_info()}")
     else:
         print("[INFO] Using BASELINE pipeline (Weighted Sum + Heuristic Reranking)")
-        from query_processor import QueryProcessor
+        from app.core.query_processor import QueryProcessor
         qp = QueryProcessor(bm)
 
     # Optionally load a user profile to evaluate personal batches (only if

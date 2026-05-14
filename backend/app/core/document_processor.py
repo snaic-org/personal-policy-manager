@@ -14,7 +14,7 @@ from typing import List, Dict, Any
 from utils.file_handlers import FileHandler
 from utils.embeddings import EmbeddingGenerator
 from utils.search import SearchIndexBuilder
-from batch_manager import BatchManager
+from core.batch_manager import BatchManager
 
 
 class DocumentProcessor:

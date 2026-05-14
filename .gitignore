@@ -255,12 +255,7 @@ $RECYCLE.BIN/
 .env.production
 
 # Document batches (large files)
-batches/*/faiss_index/
-batches/*/bm25_index.pkl
-batches/*/metadata.json
-
-# Keep batch registry but ignore the actual indexes
-!batches/batch_registry.json
+batches/
 
 # User documents (may contain sensitive data)
 documents/*/
@@ -289,6 +284,7 @@ test_*.pdf
 test_*.docx
 test_*.txt
 sample_*.pdf
+report.md
 
 # API keys and secrets
 secrets.json

@@ -8,15 +8,15 @@ npm install
 
 2. Run backend API (from repo root):
 ```bash
-python main.py --serve --port 5000
+python main.py --serve --port 8000
 ```
 
 3. Start UI:
 ```bash
 npm run dev
 ```
-- Open http://localhost:3001
+- Open http://localhost:3000
 
 Notes:
-- If backend is on a different host/port, set `VITE_API_URL` in `react-ui/.env` (e.g. `VITE_API_URL=http://localhost:5000`).
+- If backend is on a different host/port, set `VITE_API_URL` in `react-ui/.env` (e.g. `VITE_API_URL=http://localhost:8000`).
 - For production, build with `npm run build` and serve the dist.

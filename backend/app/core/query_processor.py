@@ -16,9 +16,10 @@ import re
 
 from openai import OpenAI
 from openai import AsyncOpenAI
-import google.generativeai as genai
+from google import genai
+from google.genai import types as genai_types
 
-from batch_manager import BatchManager
+from core.batch_manager import BatchManager
 from utils.search import HybridSearchEngine
 from src.intent_analyzer import IntentAnalyzer
 from src.response_analyzer import ResponseAnalyzer
@@ -39,10 +40,9 @@ class QueryProcessor:
         self.search_engine = None
         self.current_batch_id = None
 
-        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-
         self.model_name = "gemini-2.5-flash"
         self.deep_research_enabled = config.DEEP_RESEARCH_ENABLED
+        self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
     async def run_retrieval(
         self,
@@ -369,13 +369,11 @@ class QueryProcessor:
             # --- GEMINI IMPLEMENTATION ---
             system_instruction = "You are an expert financial advisor. Answer insurance questions using provided documents. Be concise and accurate."
 
-            model = genai.GenerativeModel(
-                model_name=self.model_name, system_instruction=system_instruction
-            )
-
-            response = await model.generate_content_async(
-                prompt_instructions,
-                generation_config=genai.types.GenerationConfig(
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                system_instruction=system_instruction,
+                contents=prompt_instructions,
+                config=genai_types.GenerateContentConfig(
                     temperature=config.RESPONSE_TEMPERATURE,
                     max_output_tokens=config.RESPONSE_MAX_TOKENS,
                 ),
@@ -935,13 +933,11 @@ class QueryProcessor:
             expansion_prompt = config.QUERY_EXPANSION_PROMPT.format(query=query)
 
             # --- CHANGED: Use Gemini for expansion ---
-            # Initialize a temporary model instance for this synchronous call
-            model = genai.GenerativeModel(self.model_name)
-
             # Generate content (blocking call is fine here since this method is run in thread executor)
-            response = model.generate_content(
-                expansion_prompt,
-                generation_config=genai.types.GenerationConfig(
+            response = self.client.models.generate_content(
+                model = self.model_name,
+                contents=expansion_prompt,
+                config=genai_types.GenerateContentConfig(
                     temperature=config.EXPANSION_TEMPERATURE,
                     max_output_tokens=config.EXPANSION_MAX_TOKENS,
                 ),
@@ -1789,28 +1785,32 @@ class QueryProcessor:
         try:
             print("Sending streaming request to Gemini API...")
 
-            model = genai.GenerativeModel(
-                model_name=self.model_name, system_instruction=system_instruction
-            )
-
-            # Import specific types needed for config
-            from google.generativeai.types import HarmCategory, HarmBlockThreshold
-
             # CHANGE: Use generate_content (blocking), NOT generate_content_async
-            response = model.generate_content(
-                prompt_instructions,
-                stream=True,
-                generation_config=genai.types.GenerationConfig(
+            response = self.client.models.generate_content_stream(
+                model=self.model_name,
+                contents=prompt_instructions,
+                config=genai_types.GenerateContentConfig(
                     temperature=config.RESPONSE_TEMPERATURE,
                     max_output_tokens=config.RESPONSE_MAX_TOKENS,
+                    safety_settings=[
+                        genai_types.SafetySetting(
+                            category=genai_types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                            threshold=genai_types.HarmBlockThreshold.BLOCK_NONE
+                        ),
+                        genai_types.SafetySetting(
+                            category=genai_types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                            threshold=genai_types.HarmBlockThreshold.BLOCK_NONE
+                        ),
+                        genai_types.SafetySetting(
+                            category=genai_types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                            threshold=genai_types.HarmBlockThreshold.BLOCK_NONE
+                        ),
+                        genai_types.SafetySetting(
+                            category=genai_types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                            threshold=genai_types.HarmBlockThreshold.BLOCK_NONE
+                        )
+                    ]
                 ),
-                # Add Safety Settings to prevent "Finish Reason: 3" on medical topics
-                safety_settings={
-                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-                },
             )
 
             print("Streaming response from Gemini API...")

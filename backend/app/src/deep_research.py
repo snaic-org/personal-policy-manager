@@ -281,11 +281,11 @@ async def process_serp_result(
 #         return "Error generating report"
 
 # new way to generate final report using OpenAI only cuz its btr than nvidia model 
-import google.generativeai as genai
+from google import genai
 import os
 
 # Configure Gemini at the top of your file
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 async def write_final_report(
     prompt: str,
@@ -378,13 +378,12 @@ async def write_final_report(
         """
     try:
         # ===== GEMINI VERSION =====
-        model = genai.GenerativeModel('gemini-2.5-flash')  # or 'gemini-1.5-flash' for faster/cheaper
         
         # Combine system prompt and user prompt
         full_prompt = system_prompt() + "\n\n" + report_prompt
         
         # Generate content
-        response = model.generate_content(full_prompt)
+        response = gemini_client.models.generate_content(model="gemini-2.5-flash", contents=full_prompt)
         
         report = response.text
         # ===== END GEMINI =====

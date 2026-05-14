@@ -27,9 +27,9 @@ import secrets
 # Add current directory to path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from batch_manager import BatchManager
-from query_processor import QueryProcessor
-from document_processor import DocumentProcessor
+from core.batch_manager import BatchManager
+from core.query_processor import QueryProcessor
+from core.document_processor import DocumentProcessor
 
 # --- App Initialization ---
 
@@ -38,10 +38,10 @@ CORS(app)  # Enable CORS for all routes
 
 # --- Configuration ---
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'default-fallback-key-for-dev') 
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=1)
-app.config['UPLOAD_FOLDER'] = 'documents'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
+app.config['UPLOAD_FOLDER'] = os.path.join(os.getcwd(), 'documents')
 
 INSURER_INVITE_CODE = os.getenv('INSURER_INVITE_CODE', 'default-insurer-invite-code-for-dev')
 if INSURER_INVITE_CODE == 'default-insurer-invite-code-for-dev':
@@ -660,12 +660,12 @@ def list_customers():
     return jsonify(customer_list), 200
 
 # --- Main Server ---
-def run_api_server(host="0.0.0.0", port=5000):
+def run_api_server(host="0.0.0.0", port=8000):
     with app.app_context():
         db.create_all()
     print(f"Starting API server at http://{host}:{port}")
     app.run(host=host, port=port)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 8000))
     run_api_server(port=port)

@@ -11,7 +11,7 @@
 # print("Sources:", results.get('sources'))
 
 
-from src.intent_analyzer import IntentAnalyzer
+from app.src.intent_analyzer import IntentAnalyzer
 import json
 from dotenv import load_dotenv
 load_dotenv()
@@ -36,7 +36,7 @@ if needs_research:
             rag_results = json.load(f)
 
         import asyncio
-        from src.run_integrate import run
+        from app.src.run_integrate import run
         asyncio.run(run("do i need aia insurance on top of my great eastern policy?", intent, rag_results))
     except Exception as e:
         print(f"Error during deep research: {e}")

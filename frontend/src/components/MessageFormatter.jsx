@@ -1,7 +1,7 @@
 import React from 'react';
 import { downloadFile } from '../services/api';
 
-const BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 /**
  * Handle citation click - fetch file with auth and open in new tab
@@ -65,7 +65,7 @@ function parseTextWithCitations(text, customerId) {
   if (!text) return "";
   const citationRegex = /\[Source \d+: ([^,]+), Page (\d+)\]/g;
   const urlRegex = /(https:\/\/[^\s)]+)/g;
-  
+
   const parts = [];
   let lastIndex = 0;
   let match;
@@ -108,14 +108,14 @@ function parseTextWithCitations(text, customerId) {
   if (lastIndex < text.length) {
     parts.push(text.substring(lastIndex));
   }
-  
+
   const finalParts = [];
   parts.forEach((part, index) => {
     if (typeof part !== 'string') {
       finalParts.push(part);
       return;
     }
-    
+
     let lastUrlIndex = 0;
     let urlMatch;
     while ((urlMatch = urlRegex.exec(part)) !== null) {
@@ -145,7 +145,7 @@ function parseInlineFormatting(text, customerId) {
   if (!text) return null;
   // Split by bold syntax
   const parts = text.split(/(\*\*.*?\*\*)/g);
-  
+
   return parts.map((part, index) => {
     if (part.startsWith('**') && part.endsWith('**')) {
       // Remove the ** markers and parse content inside
@@ -165,7 +165,7 @@ function renderContentLines(contentBlock, customerId) {
 
   const lines = contentBlock.split('\n');
   const elements = [];
-  
+
   let currentList = [];
   let currentListType = null; // 'ul' or 'ol'
   let currentTable = [];
@@ -252,7 +252,7 @@ function renderContentLines(contentBlock, customerId) {
       currentTable.push(trimmedLine);
       continue;
     }
-    
+
     // If we were building a table but hit a non-pipe line, flush the table
     if (currentTable.length > 0) {
       flushTable();
@@ -284,7 +284,7 @@ function renderContentLines(contentBlock, customerId) {
       currentList.push(trimmedLine.substring(2));
       continue;
     }
-    
+
     // 4. Handle Lists (Ordered)
     const numberedListMatch = trimmedLine.match(/^(\d+)\.\s+(.*)/);
     if (numberedListMatch) {
@@ -313,7 +313,7 @@ function renderContentLines(contentBlock, customerId) {
         for (let j = i + 1; j < lines.length; j++) {
           const nextTrimmed = lines[j].trim();
           if (!nextTrimmed) continue; // Skip multiple empty lines
-          
+
           // Check if next line matches current list type
           if (currentListType === 'ul' && (nextTrimmed.startsWith('- ') || nextTrimmed.startsWith('* '))) {
             nextLineIsList = true;
@@ -327,7 +327,7 @@ function renderContentLines(contentBlock, customerId) {
           continue; // Just skip this empty line, don't flush
         }
       }
-      
+
       // Otherwise, flush as normal
       flushAll();
       continue;

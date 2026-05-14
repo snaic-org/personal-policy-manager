@@ -1,4 +1,4 @@
-const BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 // --- Auth Functions ---
 
@@ -153,7 +153,7 @@ export async function uploadPolicies(files, customerId = null) {
   files.forEach(file => {
     formData.append('files', file);
   });
-  
+
   const res = await fetch(url, {
     method: 'POST',
     headers: { ...getAuthHeader() },
@@ -221,7 +221,7 @@ export async function clearHistory(customerId = null) {
 export async function sendQueryStream(query, onChunk, onComplete, onError, customerId = null) {
   const url = buildDataUrl('query/stream', customerId);
   const body = { query };
-  
+
   try {
     const res = await fetch(url, {
       method: 'POST',
@@ -261,7 +261,7 @@ export async function sendQueryStream(query, onChunk, onComplete, onError, custo
             if (contentChunk) {
               onChunk(contentChunk);
             }
-            
+
             if (data.done) {
               onComplete();
               return;
@@ -292,7 +292,7 @@ export async function downloadFile(filename, customerId = null) {
   } else {
     url = `${BASE}/files/${filename}`;
   }
-  
+
   try {
     const response = await fetch(url, {
       headers: { ...getAuthHeader() }
