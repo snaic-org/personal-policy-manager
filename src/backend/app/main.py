@@ -5,15 +5,13 @@ Main entry point for the user-facing web application.
 Handles user registration, login, document upload, and querying.
 """
 
-from dotenv import load_dotenv
-load_dotenv()
-
 import argparse
 import sys
 import os
 import json
 import traceback
 from pathlib import Path
+from dotenv import load_dotenv
 from flask import Flask, request, jsonify, Response, stream_with_context, send_file
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
@@ -26,6 +24,9 @@ import secrets
 
 # Add current directory to path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(BACKEND_ROOT / ".env")
 
 from core.batch_manager import BatchManager
 from core.query_processor import QueryProcessor
@@ -40,8 +41,10 @@ CORS(app)  # Enable CORS for all routes
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'default-fallback-key-for-dev') 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=1)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
-app.config['UPLOAD_FOLDER'] = os.path.join(os.getcwd(), 'documents')
+(BACKEND_ROOT / 'instance').mkdir(exist_ok=True)
+(BACKEND_ROOT / 'documents').mkdir(exist_ok=True)
+app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{(BACKEND_ROOT / 'instance' / 'users.db').as_posix()}"
+app.config['UPLOAD_FOLDER'] = str(BACKEND_ROOT / 'documents')
 
 INSURER_INVITE_CODE = os.getenv('INSURER_INVITE_CODE', 'default-insurer-invite-code-for-dev')
 if INSURER_INVITE_CODE == 'default-insurer-invite-code-for-dev':

@@ -85,7 +85,7 @@ class DocumentProcessor:
             print(f"Total *clean* chunks for indexing: {len(all_chunks_clean)}")
 
             # Create batch directory
-            batch_dir = Path("batches") / batch_id
+            batch_dir = self.batch_manager.batches_dir / batch_id
             batch_dir.mkdir(parents=True, exist_ok=True)
 
             # Build FAISS index

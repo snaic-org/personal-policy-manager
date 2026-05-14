@@ -33,6 +33,62 @@ Based on comprehensive evaluation:
 
 ## Quick Start
 
+### Backend Setup
+
+The backend requires Python 3.12 or newer.
+
+Create `backend/.env` from `backend/.env.example` and fill in the required API keys.
+
+#### Native Python
+
+Windows PowerShell:
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e .
+python app\main.py
+```
+
+macOS/Linux:
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+python app/main.py
+```
+
+The API starts on:
+
+```text
+http://localhost:8000
+```
+
+#### Docker
+
+Docker is the most consistent option across operating systems.
+
+```bash
+cd backend
+docker build -t personal-policy-manager-backend .
+docker run --rm -p 8000:8000 --env-file .env personal-policy-manager-backend
+```
+
+#### uv
+
+If you use `uv`:
+
+```bash
+cd backend
+uv sync
+uv run python app/main.py
+```
+
 ### 1. Setup Environment
 ```bash
 # Clone or create project directory

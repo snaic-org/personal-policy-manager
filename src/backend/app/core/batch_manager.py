@@ -10,10 +10,15 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Optional, Any
 
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+
 class BatchManager:
     def __init__(self, batches_dir: str = "batches"):
-        self.batches_dir = Path(batches_dir)
-        self.batches_dir.mkdir(exist_ok=True)
+        batches_path = Path(batches_dir)
+        if not batches_path.is_absolute():
+            batches_path = BACKEND_ROOT / batches_path
+        self.batches_dir = batches_path
+        self.batches_dir.mkdir(parents=True, exist_ok=True)
         self.registry_file = self.batches_dir / "batch_registry.json"
         self.current_batch = None
         self._load_registry()
@@ -51,9 +56,9 @@ class BatchManager:
                 "doc_count": batch_info.get("doc_count", 0),
                 "chunk_count": batch_info.get("chunk_count", 0), # --- FIX ---
                 "created_at": batch_info.get("created_at", datetime.now().isoformat()),
-                "faiss_path": f"batches/{batch_id}/faiss_index",
-                "bm25_path": f"batches/{batch_id}/bm25_index.pkl",
-                "metadata_path": f"batches/{batch_id}/metadata.json"
+                "faiss_path": str(self.batches_dir / batch_id / "faiss_index"),
+                "bm25_path": str(self.batches_dir / batch_id / "bm25_index.pkl"),
+                "metadata_path": str(self.batches_dir / batch_id / "metadata.json")
             }
 
             self._save_registry(registry)

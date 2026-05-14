@@ -5,13 +5,14 @@ Configuration Settings
 Manages application configuration and environment variables.
 """
 
-from dotenv import load_dotenv
-
-# Load .env file
-load_dotenv()
 import os
 from pathlib import Path
 from typing import Dict, Any
+from dotenv import load_dotenv
+
+
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(BACKEND_ROOT / ".env")
 
 
 class Settings:
@@ -22,8 +23,8 @@ class Settings:
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
 
         # Paths
-        self.batches_dir = "batches"
-        self.documents_dir = "documents"
+        self.batches_dir = str(BACKEND_ROOT / "batches")
+        self.documents_dir = str(BACKEND_ROOT / "documents")
 
         # Document processing
         self.chunk_size = 1200

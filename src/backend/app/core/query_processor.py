@@ -80,14 +80,22 @@ class QueryProcessor:
         q = (query or "").lower()
 
         insurance_signals = [
+            "insurance",
+            "insured",
             "policy",
+            "policies",
             "coverage",
             "covered",
             "cover",
             "claim",
             "claims",
+            "option",
+            "options",
+            "plan",
+            "plans",
             "premium",
             "benefit",
+            "benefits",
             "deductible",
             "co-insurance",
             "coinsurance",
